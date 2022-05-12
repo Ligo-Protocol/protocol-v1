@@ -76,19 +76,16 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	);
 	event contractActive(
 		uint256 _startOdometer,
-		uint256 _startChargeState,
 		int256 _startVehicleLongitude,
 		int256 _startVehicleLatitude
 	);
 	event contractCompleted(
 		uint256 _endOdometer,
-		uint256 _endChargeState,
 		int256 _endVehicleLongitude,
 		int256 _endVehicleLatitide
 	);
 	event contractCompletedError(
 		uint256 _endOdometer,
-		uint256 _endChargeState,
 		int256 _endVehicleLongitude,
 		int256 _endVehicleLatitide
 	);
@@ -98,7 +95,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		uint256 _totalBondKept,
 		uint256 _totalBondForfeitted,
 		uint256 _timePenality,
-		uint256 _chargePenalty,
 		uint256 _locationPenalty,
 		uint256 _milesPenalty
 	);
@@ -281,31 +277,31 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	) public recordChainlinkFulfillment(_requestId) {
 		//Set contract variables to start the agreement
 
-		//temp variables required for converting to signed integer
+		//temporary variables required for converting to signed integer
 		uint256 tmpStartLongitude;
 		uint256 tmpStartLatitude;
 		bytes memory longitudeBytes;
 		bytes memory latitudeBytes;
 
-		console.log("vehicle data - ", _vehicleData);
+		//temp
+		// console.log("vehicle data - ", _vehicleData);
 
 		string memory dataInString = string(abi.encodePacked(_vehicleData));
 		string[3] memory splitResults = splitData(dataInString);
 
 		//Now for each one, convert to uint
 		startOdometer = stringToUint(splitResults[0]);
-		startChargeState = stringToUint(splitResults[1]);
-		tmpStartLongitude = stringToUint(splitResults[2]);
-		tmpStartLatitude = stringToUint(splitResults[3]);
+		tmpStartLongitude = stringToUint(splitResults[1]);
+		tmpStartLatitude = stringToUint(splitResults[2]);
 
 		//Now store location coordinates in signed variables. Will always be positive, but will check in the next step if need to make negative
 		startVehicleLongitude = int256(tmpStartLongitude);
 		startVehicleLatitude = int256(tmpStartLatitude);
 
-		//Finally, check first bye in the string for the location variables. If it was a '-', then multiply location coordinate by -1
+		//Finally, check first byte in the string for the location variables. If it was a '-', then multiply location coordinate by -1
 		//first get the first byte of each location coordinate string
-		longitudeBytes = bytes(splitResults[2]);
-		latitudeBytes = bytes(splitResults[3]);
+		longitudeBytes = bytes(splitResults[1]);
+		latitudeBytes = bytes(splitResults[2]);
 
 		//First check longitude
 		if (uint256(longitudeBytes[0]) == 0x2d) {
@@ -320,12 +316,11 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		}
 
 		//Values have been set, now set the contract to ACTIVE
-		agreementStatus = RentalAgreementFactory.RentalAgreementStatus.ACTIVE;
+		agreementStatus = RentalAgreementStatus.ACTIVE;
 
 		//Emit an event now that contract is now active
 		emit contractActive(
 			startOdometer,
-			startChargeState,
 			startVehicleLongitude,
 			startVehicleLatitude
 		);
@@ -530,7 +525,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			bondKept,
 			bondForfeited,
 			totalTimePenalty,
-			totalChargePenalty,
 			totalLocationPenalty,
 			totalOdometerPenalty
 		);
@@ -538,7 +532,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		//Emit an event now that contract is now ended
 		emit contractCompleted(
 			endOdometer,
-			endChargeState,
 			endVehicleLongitude,
 			endVehicleLatitude
 		);
@@ -600,7 +593,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		// //Transfers all completed, now we just need to set contract status to successfully completed
 		// agreementStatus = RentalAgreementFactory.RentalAgreementStatus.ENDED_ERROR;
 		// //Emit an event now that contract is now ended
-		// emit contractCompletedError(endOdometer,endChargeState,endVehicleLongitude,endVehicleLatitude);
+		// emit contractCompletedError(endOdometer,endVehicleLongitude,endVehicleLatitude);
 	}
 
 	/**
@@ -748,5 +741,26 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			stringsArray[i] = stringSlice.split(delimeterSlice).toString();
 		}
 		return stringsArray;
+	}
+
+	function stringToUint(string memory numString)
+		public
+		pure
+		returns (uint256)
+	{
+		uint256 val = 0;
+		bool isNegative;
+		bytes memory stringBytes = bytes(numString);
+
+		for (uint256 i = 0; i < stringBytes.length; i++) {
+			uint256 exp = stringBytes.length - i;
+			bytes1 ival = stringBytes[i];
+			uint8 uval = uint8(ival);
+			uint256 jval = uval - uint256(0x30);
+
+			val += (uint256(jval) * (10**(exp - 1)));
+		}
+
+		return val;
 	}
 }
