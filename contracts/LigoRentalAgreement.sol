@@ -278,8 +278,10 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		//Set contract variables to start the agreement
 
 		//temporary variables required for converting to signed integer
-		uint256 tmpStartLongitude;
-		uint256 tmpStartLatitude;
+		int256 tmpStartLongitude;
+		int256 tmpStartLatitude;
+		string memory isStartLongitudeNegative; // "true" or "false"
+		string memory isStartLatitudeNegative; // "true" or "false"
 		bytes memory longitudeBytes;
 		bytes memory latitudeBytes;
 
@@ -287,33 +289,32 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		// console.log("vehicle data - ", _vehicleData);
 
 		string memory dataInString = string(abi.encodePacked(_vehicleData));
-		string[3] memory splitResults = splitData(dataInString);
+		string[5] memory splitResults = splitData(dataInString);
 
 		//Now for each one, convert to uint
 		startOdometer = stringToUint(splitResults[0]);
-		tmpStartLongitude = stringToUint(splitResults[1]);
-		tmpStartLatitude = stringToUint(splitResults[2]);
+		tmpStartLongitude = int256(stringToUint(splitResults[1]));
+		isStartLongitudeNegative = splitResults[2];
+		tmpStartLatitude = int256(stringToUint(splitResults[3]));
+		isStartLatitudeNegative = splitResults[4];
 
-		//Now store location coordinates in signed variables. Will always be positive, but will check in the next step if need to make negative
-		startVehicleLongitude = int256(tmpStartLongitude);
-		startVehicleLatitude = int256(tmpStartLatitude);
-
-		//Finally, check first byte in the string for the location variables. If it was a '-', then multiply location coordinate by -1
-		//first get the first byte of each location coordinate string
-		longitudeBytes = bytes(splitResults[1]);
-		latitudeBytes = bytes(splitResults[2]);
-
-		//First check longitude
-		if (uint256(longitudeBytes[0]) == 0x2d) {
-			//first byte was a '-', multiply result by -1
-			startVehicleLongitude = startVehicleLongitude * -1;
+		if (
+			keccak256(abi.encodePacked(isStartLongitudeNegative)) ==
+			keccak256(abi.encodePacked("true"))
+		) {
+			tmpStartLongitude = tmpStartLongitude * (-1);
 		}
 
-		//Now check latitude
-		if (uint256(latitudeBytes[0]) == 0x2d) {
-			//first byte was a '-', multiply result by -1
-			startVehicleLatitude = startVehicleLatitude * -1;
+		if (
+			keccak256(abi.encodePacked(isStartLatitudeNegative)) ==
+			keccak256(abi.encodePacked("true"))
+		) {
+			tmpStartLatitude = tmpStartLatitude * (-1);
 		}
+
+		//Now store location coordinates in signed variables.
+		startVehicleLongitude = tmpStartLongitude;
+		startVehicleLatitude = tmpStartLatitude;
 
 		//Values have been set, now set the contract to ACTIVE
 		agreementStatus = RentalAgreementStatus.ACTIVE;
