@@ -1,4 +1,3 @@
-//SPDX-License-Identifier: MIT
 pragma solidity ^0.8.7;
 // pragma experimental ABIEncoderV2;
 
@@ -347,6 +346,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			address(this),
 			this.endRentalContractCallback.selector
 		);
+
 		req.add("vehicleId", Strings.toString(vid));
 		req.add("encToken", _encToken);
 		req.add("action", "lock");
@@ -365,104 +365,93 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		public
 		recordChainlinkFulfillment(_requestId)
 	{
-		// //Set contract variables to end the agreement
+		//Set contract variables to end the agreement
 
-		//temp variables required for converting to signed integer
-		uint256 tmpEndLongitude;
-		uint256 tmpEndLatitude;
+		//temporary variables required for converting to signed integer
+		int256 tmpEndLongitude;
+		int256 tmpEndLatitude;
+		string memory isEndLongitudeNegative; // "true" or "false"
+		string memory isEndLatitudeNegative; // "true" or "false"
 		bytes memory longitudeBytes;
 		bytes memory latitudeBytes;
 
 		//first split the results into individual strings based on the delimiter
-		var s = bytes32ToString(_vehicleData).toSlice();
-		var delim = ",".toSlice();
-
-		//store each string in an array
-		string[] memory splitResults = new string[](s.count(delim) + 1);
-		for (uint256 i = 0; i < splitResults.length; i++) {
-			splitResults[i] = s.split(delim).toString();
-		}
+		string memory dataInString = string(abi.encodePacked(_vehicleData));
+		string[5] memory splitResults = splitData(dataInString);
 
 		//Now for each one, convert to uint
 		endOdometer = stringToUint(splitResults[0]);
-		endChargeState = stringToUint(splitResults[1]);
-		tmpEndLongitude = stringToUint(splitResults[2]);
-		tmpEndLatitude = stringToUint(splitResults[3]);
+		tmpEndLongitude = int256(stringToUint(splitResults[1]));
+		isEndLongitudeNegative = splitResults[2];
+		tmpEndLatitude = int256(stringToUint(splitResults[3]));
+		isEndLatitudeNegative = splitResults[4];
 
 		//Now store location coordinates in signed variables. Will always be positive, but will check in the next step if need to make negative
 		endVehicleLongitude = int256(tmpEndLongitude);
 		endVehicleLatitude = int256(tmpEndLatitude);
 
-		//Finally, check first bye in the string for the location variables. If it was a '-', then multiply location coordinate by -1
-		//first get the first byte of each location coordinate string
-		longitudeBytes = bytes(splitResults[2]);
-		latitudeBytes = bytes(splitResults[3]);
-
-		//First check longitude
-		if (uint256(longitudeBytes[0]) == 0x2d) {
-			//first byte was a '-', multiply result by -1
-			endVehicleLongitude = endVehicleLongitude * -1;
+		//Finally, check first if longitude and latitude are negative numbers and multiply by -1 if so.
+		if (
+			keccak256(abi.encodePacked(isEndLongitudeNegative)) ==
+			keccak256(abi.encodePacked("true"))
+		) {
+			tmpEndLongitude = tmpEndLongitude * (-1);
 		}
 
-		//Now check latitude
-		if (uint256(latitudeBytes[0]) == 0x2d) {
-			//first byte was a '-', multiply result by -1
-			endVehicleLatitude = endVehicleLatitude * -1;
+		if (
+			keccak256(abi.encodePacked(isEndLatitudeNegative)) ==
+			keccak256(abi.encodePacked("true"))
+		) {
+			tmpEndLatitude = tmpEndLatitude * (-1);
 		}
+
+		//Now store location coordinates in signed variables.
+		endVehicleLongitude = tmpEndLongitude;
+		endVehicleLatitude = tmpEndLatitude;
 
 		//Set the end time of the contract
-		rentalAgreementEndDateTime = now;
+		rentalAgreementEndDateTime = block.timestamp;
 
 		//Now that we have all values in contract, we can calculate final fees & penalties payable
 
 		//First calculate and send platform fee
 		//Total to go to platform = base fee / platform fee %
-		totalPlatformFee = totalRentCost.div(uint256(100).div(PLATFORM_FEE));
+		totalPlatformFee = totalRentCost / (100 / PLATFORM_FEE);
 
 		//now total rent payable is original amount minus calculated platform fee above
 		totalRentPayable = totalRentCost - totalPlatformFee;
 
-		//Total to go to car owner = (base fee - platform fee from above) + time penalty + location penalty + charge penalty
+		//Total to go to car owner = (base fee - platform fee from above) + time penalty + location penalty
 
 		//Now calculate penalties to be used for amount to go to car owner
 
-		//Odometer penalty. Number of miles over agreed total miles * odometer penalty per mile.
-		//Eg if only 10 miles allowed but agreement logged 20 miles, with a penalty of 1% per extra mile
+		//Odometer penalty. Number of kilometers over agreed total kilometers * odometer penalty per kilometer.
+		//Eg if only 10 km allowed but agreement logged 20 km, with a penalty of 1% per extra km
 		//then penalty is 20-10 = 10 * 1% = 10% of Bond
-		totalMiles = endOdometer.sub(startOdometer);
-		if (totalMiles > ODOMETER_BUFFER) {
-			totalOdometerPenalty = totalMiles.mul(ODOMETER_FINE).mul(totalBond);
-			totalOdometerPenalty = (totalMiles.sub(ODOMETER_BUFFER)).mul(
-				totalBond.div(uint256(100).div(ODOMETER_FINE))
-			);
+		totalKm = endOdometer - startOdometer;
+		if (totalKm > ODOMETER_BUFFER) {
+			totalOdometerPenalty =
+				(totalKm - ODOMETER_BUFFER) *
+				(totalBond / (100 / ODOMETER_FINE));
 		}
 
 		//Time penalty. Number of hours past agreed end date/time + buffer * time penalty per hour
 		//eg TIME_FINE buffer set to 1 = 1% of bond for each hour past the end date + buffer (buffer currently set to 3 hours)
 		if (rentalAgreementEndDateTime > endDateTime) {
-			secsPastEndDate = rentalAgreementEndDateTime.sub(endDateTime);
+			secsPastEndDate = rentalAgreementEndDateTime - endDateTime;
 			//if retuned later than the the grace period, incur penalty
 			if (secsPastEndDate > TIME_BUFFER) {
 				//penalty incurred
 				//penalty TIME_FINE is a % per hour over. So if over by less than an hour, round up to an hour
-				if (secsPastEndDate.sub(TIME_BUFFER) < 3600) {
-					totalTimePenalty = uint256(1).mul(
-						totalBond.div(uint256(100).div(TIME_FINE))
-					);
+				if (secsPastEndDate - TIME_BUFFER < 3600) {
+					totalTimePenalty = totalBond / (100 / TIME_FINE);
 				} else {
 					//do normal penlaty calculation in hours
-					totalTimePenalty = secsPastEndDate
-						.sub(TIME_BUFFER)
-						.div(3600)
-						.mul(totalBond.div(uint256(100).div(TIME_FINE)));
+					totalTimePenalty =
+						((secsPastEndDate - TIME_BUFFER) / 3600) *
+						(totalBond / (100 / TIME_FINE));
 				}
 			}
-		}
-
-		//Charge penalty. Simple comparison of charge at start & end. If it isn't at least what it was at agreement start, then a static fee is paid of
-		//CHARGE_FINE, which is a % of bond. Currently set to 1%
-		if (startChargeState > endChargeState) {
-			totalChargePenalty = totalBond.div(uint256(100).div(CHARGE_FINE));
 		}
 
 		//Location penalty. If the vehicle is not returned to around the same spot, then a penalty is incurred.
@@ -472,12 +461,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		//eg if LOCATION_BUFFER set to 100m, fee set to 1% per 1km, and renter returns vehicle 2km from original place
 		//fee payable is 2 * 1 = 2% of bond
 
-		longitudeDifference = abs(
-			abs(startVehicleLongitude) - abs(endVehicleLongitude)
-		);
-		latitudeDifference = abs(
-			abs(startVehicleLatitude) - abs(endVehicleLatitude)
-		);
+		longitudeDifference = abs(startVehicleLongitude - endVehicleLongitude);
+		latitudeDifference = abs(startVehicleLatitude - endVehicleLatitude);
 
 		if (longitudeDifference > LOCATION_BUFFER) {
 			//If difference in longitude is > 100m
@@ -515,9 +500,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		renter.transfer(totalBondReturned);
 
 		//Transfers all completed, now we just need to set contract status to successfully completed
-		agreementStatus = RentalAgreementFactory
-			.RentalAgreementStatus
-			.COMPLETED;
+		agreementStatus = RentalAgreementStatus.COMPLETED;
 
 		//Emit an event with all the payments
 		emit agreementPayments(
