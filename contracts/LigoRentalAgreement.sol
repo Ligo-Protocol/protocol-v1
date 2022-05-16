@@ -5,9 +5,10 @@ import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "hardhat/console.sol";
+
 import "./strings.sol";
 import "./LigoAgreementsFactory.sol";
-import "hardhat/console.sol";
 
 contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	using Chainlink for Chainlink.Request;
@@ -247,7 +248,9 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		);
 
 		//get vehicle ID of the vehicle, needed for the request
-		uint256 vid = LigoAgreementsFactory(owner()).getVehicleId(vehicleOwner);
+		string memory vid = LigoAgreementsFactory(owner()).getVehicleId(
+			vehicleOwner
+		);
 
 		//call to chainlink node job to wake up the car, get starting vehicle data, then unlock the car
 		Chainlink.Request memory req = buildChainlinkRequest(
@@ -255,7 +258,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			address(this),
 			this.activateRentalContractCallback.selector
 		);
-		req.add("vehicleId", Strings.toString(vid));
+		req.add("vehicleId", vid);
 		req.add("encToken", _encToken);
 		req.add("action", "unlock");
 		sendChainlinkRequestTo(
@@ -336,7 +339,9 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		//First we need to check if vehicle can be accessed, if so then do a call to get vehicle data
 
 		//get vehicle ID of the vehicle, needed for the request
-		uint256 vid = LigoAgreementsFactory(owner()).getVehicleId(vehicleOwner);
+		string memory vid = LigoAgreementsFactory(owner()).getVehicleId(
+			vehicleOwner
+		);
 
 		//call to chainlink node job to wake up the car, get ending vehicle data, then lock the car
 		Chainlink.Request memory req = buildChainlinkRequest(
@@ -345,7 +350,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			this.endRentalContractCallback.selector
 		);
 
-		req.add("vehicleId", Strings.toString(vid));
+		req.add("vehicleId", vid);
 		req.add("encToken", _encToken);
 		req.add("action", "lock");
 		sendChainlinkRequestTo(
@@ -536,7 +541,9 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		);
 
 		//get vehicle ID of the vehicle, needed for the request
-		uint256 vid = LigoAgreementsFactory(owner()).getVehicleId(vehicleOwner);
+		string memory vid = LigoAgreementsFactory(owner()).getVehicleId(
+			vehicleOwner
+		);
 
 		//call to chainlink node job to wake up the car, get ending vehicle data
 		Chainlink.Request memory req = buildChainlinkRequest(
@@ -544,7 +551,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			address(this),
 			this.forceEndRentalContractCallback.selector
 		);
-		req.add("vehicleId", Strings.toString(vid));
+		req.add("vehicleId", vid);
 		req.add("encToken", _encToken);
 		req.add("action", "vehicle_data");
 		sendChainlinkRequestTo(
