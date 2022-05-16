@@ -1,11 +1,11 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.7;
-// pragma experimental ABIEncoderV2;
 
 import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "https://github.com/Arachnid/solidity-stringutils/blob/master/src/strings.sol";
+import "./strings.sol";
 import "./LigoAgreementsFactory.sol";
 import "hardhat/console.sol";
 
@@ -22,7 +22,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		ENDED_ERROR
 	}
 
-	uint256 private constant LOCATION_BUFFER = 10000; //Buffer for how far from start position end position can be without incurring fine. 10000 = 1m
+	uint256 private constant LOCATION_BUFFER = 10; //Buffer for how far from start position end position can be without incurring fine. -> 1 = 10m -> 10 = 100m
 	uint256 private constant ODOMETER_BUFFER = 5; //Buffer for how many kilometers past agreed total kilometers allowed without incurring fine
 	uint256 private constant TIME_BUFFER = 10800; //Buffer for how many seconds past agreed end time can the renter end the contrat without incurring a penalty
 
@@ -51,8 +51,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	//variables for calulating final fee payable
 	uint256 private totalKm = 0;
 	uint256 private secsPastEndDate = 0;
-	int256 private longitudeDifference = 0;
-	int256 private latitudeDifference = 0;
+	uint256 private longitudeDifference = 0;
+	uint256 private latitudeDifference = 0;
 	uint256 private totalLocationPenalty = 0;
 	uint256 private totalOdometerPenalty = 0;
 	uint256 private totalTimePenalty = 0;
@@ -91,11 +91,11 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	event agreementPayments(
 		uint256 _platformFee,
 		uint256 _totalRent,
-		uint256 _totalBondKept,
+		uint256 _totalBondReturned,
 		uint256 _totalBondForfeitted,
 		uint256 _timePenality,
 		uint256 _locationPenalty,
-		uint256 _milesPenalty
+		uint256 _kmPenalty
 	);
 
 	/**
@@ -167,7 +167,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		address _oracle,
 		uint256 _oraclePaymentAmount,
 		bytes32 _jobId
-	) payable onlyOwner() {
+	) payable {
 		//first ensure insurer has fully funded the contract - check here. money should be transferred on creation of agreement.
 		// TODO: figure out if we should check bond or rent cost
 		// require(msg.value > _totalBond, "Not enough funds sent to contract");
@@ -281,14 +281,12 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		int256 tmpStartLatitude;
 		string memory isStartLongitudeNegative; // "true" or "false"
 		string memory isStartLatitudeNegative; // "true" or "false"
-		bytes memory longitudeBytes;
-		bytes memory latitudeBytes;
 
 		//temp
 		// console.log("vehicle data - ", _vehicleData);
 
 		string memory dataInString = string(abi.encodePacked(_vehicleData));
-		string[5] memory splitResults = splitData(dataInString);
+		string[] memory splitResults = splitData(dataInString);
 
 		//Now for each one, convert to uint
 		startOdometer = stringToUint(splitResults[0]);
@@ -372,12 +370,10 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		int256 tmpEndLatitude;
 		string memory isEndLongitudeNegative; // "true" or "false"
 		string memory isEndLatitudeNegative; // "true" or "false"
-		bytes memory longitudeBytes;
-		bytes memory latitudeBytes;
 
 		//first split the results into individual strings based on the delimiter
 		string memory dataInString = string(abi.encodePacked(_vehicleData));
-		string[5] memory splitResults = splitData(dataInString);
+		string[] memory splitResults = splitData(dataInString);
 
 		//Now for each one, convert to uint
 		endOdometer = stringToUint(splitResults[0]);
@@ -466,38 +462,41 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 
 		if (longitudeDifference > LOCATION_BUFFER) {
 			//If difference in longitude is > 100m
-			totalLocationPenalty = uint256(longitudeDifference).div(10000).mul(
-				totalBond.div(uint256(100).div(LOCATION_FINE))
-			);
+			totalLocationPenalty =
+				(longitudeDifference / 10000) *
+				(totalBond / (100 / LOCATION_FINE));
 		} else if (latitudeDifference > LOCATION_BUFFER) {
 			//If difference in latitude is > 100m
-			totalLocationPenalty = uint256(latitudeDifference).div(10000).mul(
-				totalBond.div(uint256(100).div(LOCATION_FINE))
-			);
+			totalLocationPenalty =
+				(latitudeDifference / 10000) *
+				(totalBond / (100 / LOCATION_FINE));
 		}
 
 		//Final amount of bond to go to owner = sum of all penalties above. Then renter gets rest
-		bondForfeited = totalOdometerPenalty
-			.add(totalTimePenalty)
-			.add(totalChargePenalty)
-			.add(totalLocationPenalty);
-		uint256 bondKept = totalBond.sub(bondForfeited);
+		bondForfeited =
+			totalOdometerPenalty +
+			totalTimePenalty +
+			totalLocationPenalty;
+		//Check if forfeited bond is smaller than whole contract owned bond.
+		if (bondForfeited > totalBond) {
+			bondForfeited = totalBond;
+			//bond kept should stay at 0;
+		} else {
+			totalBondReturned = totalBond - bondForfeited;
+		}
 
 		//Now that we have all fees & charges calculated, perform necessary transfers & then end contract
 		//first pay platform fee
-		dappWallet.transfer(totalPlatformFee);
+		payable(owner()).transfer(totalPlatformFee);
 
 		//then pay vehicle owner rent amount
-		vehicleOwner.transfer(totalRentPayable);
-
-		//pay Owner  any bond penalties. Only if > 0
-		if (bondForfeited > 0) {
-			owner.transfer(bondForfeited);
-		}
+		uint256 totalAmoutToPayForOwner = totalRentPayable + bondForfeited;
+		vehicleOwner.transfer(totalAmoutToPayForOwner);
 
 		//finally, pay renter back any remaining bond
-		totalBondReturned = address(this).balance;
-		renter.transfer(totalBondReturned);
+		if (totalBondReturned > 0) {
+			renter.transfer(totalBondReturned);
+		}
 
 		//Transfers all completed, now we just need to set contract status to successfully completed
 		agreementStatus = RentalAgreementStatus.COMPLETED;
@@ -506,7 +505,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		emit agreementPayments(
 			totalPlatformFee,
 			totalRentPayable,
-			bondKept,
+			totalBondReturned,
 			bondForfeited,
 			totalTimePenalty,
 			totalLocationPenalty,
@@ -527,7 +526,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	function forceEndRentalContract(string memory _encToken)
 		external
-		onlyOwner
+		onlyVehicleOwner
 		onlyContractActive
 	{
 		//don't allow unless contract still active & current time is > contract end date + TIME_BUFFER
@@ -562,22 +561,29 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		bytes32 _requestId,
 		bytes32 _vehicleData
 	) public recordChainlinkFulfillment(_requestId) {
-		// totalPlatformFee = totalRentCost.div(uint(100).div(PLATFORM_FEE));
-		// //now total rent payable is original amount minus calculated platform fee above
-		// totalRentPayable = totalRentCost - totalPlatformFee;
-		// bondForfeited = totalBondReturned;
-		// totalBondReturned = 0;
-		// //Now that we have all fees & charges calculated, perform necessary transfers & then end contract
-		// //first pay platform fee
-		// dappWallet.transfer(totalPlatformFee);
-		// //then pay vehicle owner rent payable
-		// vehicleOwner.transfer(totalRentPayable);
-		// //pay owner the bond owed
-		// vehicleOwner.transfer(bondForfeited);
-		// //Transfers all completed, now we just need to set contract status to successfully completed
-		// agreementStatus = RentalAgreementFactory.RentalAgreementStatus.ENDED_ERROR;
-		// //Emit an event now that contract is now ended
-		// emit contractCompletedError(endOdometer,endVehicleLongitude,endVehicleLatitude);
+		totalPlatformFee = totalRentCost / (100 / PLATFORM_FEE);
+
+		//now total rent payable is original amount minus calculated platform fee above
+		totalRentPayable = totalRentCost - totalPlatformFee;
+		bondForfeited = totalBond;
+
+		//Now that we have all fees & charges calculated, perform necessary transfers & then end contract
+		//first pay platform fee
+		payable(owner()).transfer(totalPlatformFee);
+
+		//then pay vehicle owner rent payable and bond owed
+		uint256 totalAmoutToPayForOwner = totalRentPayable + bondForfeited;
+		vehicleOwner.transfer(totalAmoutToPayForOwner);
+
+		//Transfers all completed, now we just need to set contract status to successfully completed
+		agreementStatus = RentalAgreementStatus.ENDED_ERROR;
+
+		//Emit an event now that contract is now ended
+		emit contractCompletedError(
+			endOdometer,
+			endVehicleLongitude,
+			endVehicleLatitude
+		);
 	}
 
 	/**
@@ -704,8 +710,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	/**
 	 * @dev Helper function to get absolute value of an int
 	 */
-	function abs(int256 x) private pure returns (int256) {
-		return x >= 0 ? x : -x;
+	function abs(int256 x) private pure returns (uint256) {
+		return x >= 0 ? uint256(x) : uint256(-x);
 	}
 
 	/**
@@ -713,7 +719,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	function splitData(string memory _stringData)
 		private
-		view
+		pure
 		returns (string[] memory)
 	{
 		strings.slice memory stringSlice = _stringData.toSlice();
@@ -733,7 +739,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		returns (uint256)
 	{
 		uint256 val = 0;
-		bool isNegative;
 		bytes memory stringBytes = bytes(numString);
 
 		for (uint256 i = 0; i < stringBytes.length; i++) {
