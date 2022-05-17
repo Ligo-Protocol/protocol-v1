@@ -14,15 +14,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	using Chainlink for Chainlink.Request;
 	using strings for *;
 
-	enum RentalAgreementStatus {
-		PROPOSED,
-		APPROVED,
-		REJECTED,
-		ACTIVE,
-		COMPLETED,
-		ENDED_ERROR
-	}
-
 	uint256 private constant LOCATION_BUFFER = 10; //Buffer for how far from start position end position can be without incurring fine. -> 1 = 10m -> 10 = 100m
 	uint256 private constant ODOMETER_BUFFER = 5; //Buffer for how many kilometers past agreed total kilometers allowed without incurring fine
 	uint256 private constant TIME_BUFFER = 10800; //Buffer for how many seconds past agreed end time can the renter end the contrat without incurring a penalty
@@ -39,7 +30,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	uint256 private endDateTime;
 	uint256 private totalRentCost;
 	uint256 private totalBond;
-	RentalAgreementStatus private agreementStatus;
+	LigoAgreementsFactory.RentalAgreementStatus private agreementStatus;
 
 	uint256 private startOdometer = 0;
 	uint256 private endOdometer = 0;
@@ -126,7 +117,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	modifier onlyContractProposed() {
 		require(
-			agreementStatus == RentalAgreementStatus.PROPOSED,
+			agreementStatus ==
+				LigoAgreementsFactory.RentalAgreementStatus.PROPOSED,
 			"Contract must be in PROPOSED status"
 		);
 		_;
@@ -137,7 +129,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	modifier onlyContractApproved() {
 		require(
-			agreementStatus == RentalAgreementStatus.APPROVED,
+			agreementStatus ==
+				LigoAgreementsFactory.RentalAgreementStatus.APPROVED,
 			"Contract must be in APPROVED status"
 		);
 		_;
@@ -148,7 +141,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	modifier onlyContractActive() {
 		require(
-			agreementStatus == RentalAgreementStatus.ACTIVE,
+			agreementStatus ==
+				LigoAgreementsFactory.RentalAgreementStatus.ACTIVE,
 			"Contract must be in ACTIVE status"
 		);
 		_;
@@ -170,8 +164,10 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		bytes32 _jobId
 	) payable {
 		//first ensure insurer has fully funded the contract - check here. money should be transferred on creation of agreement.
-		// TODO: figure out if we should check bond or rent cost
-		// require(msg.value > _totalBond, "Not enough funds sent to contract");
+		require(
+			msg.value > _totalBond + _totalRentCost,
+			"Not enough funds sent to contract"
+		);
 
 		//initialize variables required for Chainlink Node interaction
 		setChainlinkToken(_link);
@@ -186,7 +182,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		endDateTime = _endDateTime;
 		totalRentCost = _totalRentCost;
 		totalBond = _totalBond;
-		agreementStatus = RentalAgreementStatus.PROPOSED;
+		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.PROPOSED;
 
 		emit rentalAgreementCreated(
 			vehicleOwner,
@@ -205,7 +201,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		//Vehicle Owner simply looks at proposed agreement & either approves or denies it.
 		//Only vehicle owner can run this, contract must be in PROPOSED status
 		//In this case, we approve. Contract becomes Approved and sits waiting until start time reaches
-		agreementStatus = RentalAgreementStatus.APPROVED;
+		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.APPROVED;
 	}
 
 	/**
@@ -220,13 +216,10 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 
 		//return any LINK tokens in here back to the DAPP wallet
 		LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
-		require(
-			link.transfer(owner(), link.balanceOf(address(this))),
-			"Unable to transfer"
-		);
+		ink.transfer(owner(), link.balanceOf(address(this)));
 
 		//Set status to rejected. This is the end of the line for this agreement
-		agreementStatus = RentalAgreementStatus.REJECTED;
+		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.REJECTED;
 	}
 
 	/**
@@ -285,7 +278,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		startVehicleLatitude = _startLatitude;
 
 		//Values have been set, now set the contract to ACTIVE
-		agreementStatus = RentalAgreementStatus.ACTIVE;
+		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.ACTIVE;
 
 		//Emit an event now that contract is now active
 		emit contractActive(
@@ -437,7 +430,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		}
 
 		//Transfers all completed, now we just need to set contract status to successfully completed
-		agreementStatus = RentalAgreementStatus.COMPLETED;
+		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.COMPLETED;
 
 		//Emit an event with all the payments
 		emit agreementPayments(
@@ -523,7 +516,9 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		vehicleOwner.transfer(totalAmoutToPayForOwner);
 
 		//Transfers all completed, now we just need to set contract status to successfully completed
-		agreementStatus = RentalAgreementStatus.ENDED_ERROR;
+		agreementStatus = LigoAgreementsFactory
+			.RentalAgreementStatus
+			.ENDED_ERROR;
 
 		//Emit an event now that contract is now ended
 		emit contractCompletedError(
@@ -557,7 +552,11 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	/**
 	 * @dev Get status of the agreement
 	 */
-	function getAgreementStatus() public view returns (RentalAgreementStatus) {
+	function getAgreementStatus()
+		public
+		view
+		returns (LigoAgreementsFactory.RentalAgreementStatus)
+	{
 		return agreementStatus;
 	}
 
@@ -588,7 +587,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			uint256,
 			uint256,
 			uint256,
-			RentalAgreementStatus
+			LigoAgreementsFactory.RentalAgreementStatus
 		)
 	{
 		return (
@@ -659,44 +658,5 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	function abs(int256 x) private pure returns (uint256) {
 		return x >= 0 ? uint256(x) : uint256(-x);
-	}
-
-	/**
-	 * @dev Helper function to get convert string into list of strings
-	 */
-	function splitData(string memory _stringData)
-		private
-		pure
-		returns (string[] memory)
-	{
-		strings.slice memory stringSlice = _stringData.toSlice();
-		strings.slice memory delimeterSlice = "-".toSlice();
-		string[] memory stringsArray = new string[](
-			stringSlice.count(delimeterSlice) + 1
-		);
-		for (uint256 i = 0; i < stringsArray.length; i++) {
-			stringsArray[i] = stringSlice.split(delimeterSlice).toString();
-		}
-		return stringsArray;
-	}
-
-	function stringToUint(string memory numString)
-		public
-		pure
-		returns (uint256)
-	{
-		uint256 val = 0;
-		bytes memory stringBytes = bytes(numString);
-
-		for (uint256 i = 0; i < stringBytes.length; i++) {
-			uint256 exp = stringBytes.length - i;
-			bytes1 ival = stringBytes[i];
-			uint8 uval = uint8(ival);
-			uint256 jval = uval - uint256(0x30);
-
-			val += (uint256(jval) * (10**(exp - 1)));
-		}
-
-		return val;
 	}
 }

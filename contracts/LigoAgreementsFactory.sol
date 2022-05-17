@@ -58,9 +58,9 @@ contract LigoAgreementsFactory is Ownable {
 
 	AggregatorV3Interface internal ethUsdPriceFeed;
 
-	mapping(address => Vehicle) vehicles;
+	mapping(address => Vehicle) public vehicles;
 
-	LigoRentalAgreement[] rentalAgreements;
+	LigoRentalAgreement[] public rentalAgreements;
 
 	modifier onlyNode() {
 		require(NODE_ADDRESS == msg.sender, "Only Node can call this function");
@@ -110,7 +110,6 @@ contract LigoAgreementsFactory is Ownable {
 		return _value;
 	}
 
-	//temp continue here
 	function convertFiatToEth(uint256 _value, Currency _fromCurrency)
 		public
 		view
@@ -120,22 +119,17 @@ contract LigoAgreementsFactory is Ownable {
 			return _value;
 		}
 
-		int256 ethUsdPrice = getLatestEthUsdPrice();
-		uint256 fromUsd = ((_value * 1 ether) / uint256(ethUsdPrice));
+		uint256 ethUsdPrice = uint256(getLatestEthUsdPrice());
+		uint256 fromUsd = (_value * 1 ether) / ethUsdPrice;
 		if (_fromCurrency == Currency.USD) {
 			return fromUsd;
-		} else if (_fromCurrency == Currency.GBP) {
-			int256 gbpUsdPrice = getLatestGbpUsdPrice();
-			return (fromUsd * uint256(gbpUsdPrice)) / (10**8);
-		} else if (_fromCurrency == Currency.AUD) {
-			int256 audUsdPrice = getLatestAudUsdPrice();
-			return (fromUsd * uint256(audUsdPrice)) / (10**8);
 		}
+
 		return _value;
 	}
 
 	/**
-	 * @dev Create a new Rental Agreement. Once it's created, all logic & flow is handled from within the RentalAgreement Contract
+	 * @dev Create a new Rental Agreement. Once it's created, all logic & flow is handled from within the LigoRentalAgreement Contract
 	 */
 	function newRentalAgreement(
 		address _vehicleOwner,
@@ -148,7 +142,7 @@ contract LigoAgreementsFactory is Ownable {
 
 		//start date must be < end date and must be at least 1 hour (3600 seconds)
 		require(
-			_endDateTime >= _startDateTime.add(3600),
+			_endDateTime >= _startDateTim + 3600,
 			"Vehicle Agreement must be for a minimum of 1 hour"
 		);
 
@@ -165,7 +159,10 @@ contract LigoAgreementsFactory is Ownable {
 		);
 
 		//ensure start date is now or in the future
-		//require (_startDateTime >= now,'Vehicle Agreement cannot be in the past');
+		require(
+			_startDateTime >= block.timestamp,
+			"Vehicle Agreement cannot be in the past"
+		);
 
 		// Ensure correct amount of ETH has been sent for total rent cost & bond
 		uint256 convertedMsgValue = convertEthToFiat(
@@ -178,8 +175,8 @@ contract LigoAgreementsFactory is Ownable {
 
 		//add 1% tolerance to account for rounding & fluctuations in case a round just ended in price feed
 		require(
-			convertedMsgValue.add(convertedMsgValue.div(100)) >=
-				totalRentCost.add(bondRequired),
+			convertedMsgValue + (convertedMsgValue / 100) >=
+				totalRentCost + bondRequired,
 			"Insufficient rent & bond paid"
 		);
 
@@ -193,31 +190,34 @@ contract LigoAgreementsFactory is Ownable {
 		uint256 totalRentCostETH = msg.value - bondRequiredETH;
 
 		//create new Rental Agreement
-		RentalAgreement a = (new RentalAgreement).value(
-			totalRentCostETH.add(bondRequiredETH)
-		)(
-				_vehicleOwner,
-				_renter,
-				_startDateTime,
-				_endDateTime,
-				totalRentCostETH,
-				bondRequiredETH,
-				LINK_KOVAN,
-				ORACLE_CONTRACT,
-				ORACLE_PAYMENT,
-				JOB_ID
-			);
+		LigoRentalAgreement rentalAgreement = new LigoRentalAgreement(
+			_vehicleOwner,
+			_renter,
+			_startDateTime,
+			_endDateTime,
+			totalRentCostETH,
+			bondRequiredETH,
+			LINK_KOVAN,
+			ORACLE_CONTRACT,
+			ORACLE_PAYMENT,
+			JOB_ID
+		);
+
+		// Send the ETH it owns
+		rentalAgreement.transfer(totalRentCostETH + bondRequiredETH);
 
 		//store new agreement in array of agreements
-		rentalAgreements.push(a);
+		rentalAgreements.push(rentalAgreement);
 
-		emit rentalAgreementCreated(address(a), msg.value);
+		emit rentalAgreementCreated(address(rentalAgreement), msg.value);
 
 		//now that contract has been created, we need to fund it with enough LINK tokens to fulfil 1 Oracle request per day
-		LinkTokenInterface link = LinkTokenInterface(a.getChainlinkToken());
-		link.transfer(address(a), 1 ether);
+		LinkTokenInterface link = LinkTokenInterface(
+			rentalAgreement.getChainlinkToken()
+		);
+		link.transfer(address(rentalAgreement), 1 ether);
 
-		return address(a);
+		return address(rentalAgreement);
 	}
 
 	/**
@@ -225,28 +225,30 @@ contract LigoAgreementsFactory is Ownable {
 	 */
 	function newVehicle(
 		address _vehicleOwner,
-		uint256 _vehicleId,
+		string _vehicleId,
 		uint256 _baseHireFee,
 		uint256 _bondRequired,
 		Currency _ownerCurrency,
-		VehicleModels _vehicleModel,
-		string _vehiclePlate,
+		string _vehicleMake,
+		string _vehicleModel,
 		int256 _vehicleLongitude,
 		int256 _vehicleLatitude
 	) public {
 		//adds a vehicle and stores it in the vehicles mapping. Each vehicle is represented by 1 Ethereum address
 
-		var v = vehicles[_vehicleOwner];
+		Vehicle memory v;
 		v.vehicleId = _vehicleId;
 		v.ownerAddress = _vehicleOwner;
 		v.baseHireFee = _baseHireFee;
 		v.bondRequired = _bondRequired;
 		v.ownerCurrency = _ownerCurrency;
+		v.vehicleMake = _vehicleMake;
 		v.vehicleModel = _vehicleModel;
-		v.vehiclePlate = _vehiclePlate;
 		v.vehicleLongitude = _vehicleLongitude;
 		v.vehicleLatitude = _vehicleLatitude;
 		v.status = VehicleStatus.PENDING;
+
+		vehicles[_vehicleOwner] = v;
 
 		emit vehicleAdded(
 			_vehicleId,
@@ -254,15 +256,15 @@ contract LigoAgreementsFactory is Ownable {
 			_baseHireFee,
 			_bondRequired,
 			_ownerCurrency,
+			_vehicleMake,
 			_vehicleModel,
-			_vehiclePlate,
 			_vehicleLongitude,
 			_vehicleLatitude
 		);
 	}
 
 	/**
-	 * @dev Approves a vehicle for use in the app. Only a Chainlink node can call this, as it knows if the test to the tesla servers was
+	 * @dev Approves a vehicle for use in the app. Only a Chainlink node can call this, as it knows if the test to the smartcar servers was
 	 * successful or not
 	 */
 	function approveVehicle(address _walletOwner) public onlyNode {
@@ -274,14 +276,22 @@ contract LigoAgreementsFactory is Ownable {
 	/**
 	 * @dev Return a particular Vehicle struct based on a wallet address
 	 */
-	function getVehicle(address _walletOwner) external view returns (Vehicle) {
+	function getVehicle(address _walletOwner)
+		external
+		view
+		returns (Vehicle memory)
+	{
 		return vehicles[_walletOwner];
 	}
 
 	/**
 	 * @dev Return all rental contract addresses
 	 */
-	function getRentalContracts() external view returns (RentalAgreement[]) {
+	function getRentalContracts()
+		external
+		view
+		returns (LigoRentalAgreement[] memory)
+	{
 		return rentalAgreements;
 	}
 
@@ -313,47 +323,42 @@ contract LigoAgreementsFactory is Ownable {
 	 * @dev Return a list of rental contract addresses belonging to a particular vehicle owner or renter
 	 *      ownerRenter = 0 means vehicle owner, 1 = vehicle renter
 	 */
-	function getRentalContracts(uint256 _owner, address _address)
+	function getRentalContracts(bool _isOwner, address _address)
 		external
 		view
-		returns (address[])
+		returns (address[] memory)
 	{
-		//loop through list of contracts, and find any belonging to the address & type (renter or vehicle owner)
-		//_owner variable determines if were searching for agreements for the owner or renter
-		//0 = renter & 1 = owner
-		uint256 finalResultCount = 0;
+		// //loop through list of contracts, and find any belonging to the address & type (renter or vehicle owner)
+		// uint256 finalResultCount = 0;
 
-		//because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
-		for (uint256 i = 0; i < rentalAgreements.length; i++) {
-			if (_owner == 1) {
-				//owner scenario
-				if (rentalAgreements[i].getVehicleOwner() == _address) {
-					finalResultCount = finalResultCount + 1;
-				}
-			} else {
-				//renter scenario
-				if (rentalAgreements[i].getVehicleRenter() == _address) {
-					finalResultCount = finalResultCount + 1;
-				}
-			}
-		}
+		// //because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
+		// for (uint256 i = 0; i < rentalAgreements.length; i++) {
+		// 	if (_isOwner == true) {
+		// 		//owner scenario
+		// 		if (rentalAgreements[i].getVehicleOwner() == _address) {
+		// 			finalResultCount = finalResultCount + 1;
+		// 		}
+		// 	} else {
+		// 		//renter scenario
+		// 		if (rentalAgreements[i].getVehicleRenter() == _address) {
+		// 			finalResultCount = finalResultCount + 1;
+		// 		}
+		// 	}
+		// }
 
 		//now we have the total count, we can create a memory array with the right size and then populate it
-		address[] memory addresses = new address[](finalResultCount);
-		uint256 addrCountInserted = 0;
+		address[] memory addresses;
 
 		for (uint256 j = 0; j < rentalAgreements.length; j++) {
-			if (_owner == 1) {
+			if (_isOwner == true) {
 				//owner scenario
 				if (rentalAgreements[j].getVehicleOwner() == _address) {
-					addresses[addrCountInserted] = address(rentalAgreements[j]);
-					addrCountInserted = addrCountInserted + 1;
+					addresses.push(address(rentalAgreements[j]));
 				}
 			} else {
 				//renter scenario
 				if (rentalAgreements[j].getVehicleRenter() == _address) {
-					addresses[addrCountInserted] = address(rentalAgreements[j]);
-					addrCountInserted = addrCountInserted + 1;
+					addresses.push(address(rentalAgreements[j]));
 				}
 			}
 		}
@@ -365,48 +370,50 @@ contract LigoAgreementsFactory is Ownable {
 	 * @dev Function that takes a vehicle ID/address, start & end epochs and then searches through to see if
 	 *      vehicle is available during those dates or not
 	 */
-	function checkVehicleAvailable(
-		address _vehicleAddress,
+	function isVehicleAvailable(
+		address _ownerAddress,
 		uint256 _start,
 		uint256 _end
-	) public view returns (uint256) {
+	) public view returns (bool) {
 		//algorithm works as follows:
 		//vehicle needs to be in approved status otherwise return false
 		//loop through all rental agreemets
 		//for each agreement, check if its our vehicle
 		//if its our vehicle, check if agreement is approved or active (proposed & completed/error not included)
-		//and if its approved or active, check if overlap:  overlap = param.start < contract.end && contract.start < param.end;
-		//if overlap, return 0
-		//else return 1
+		//and if its approved or active, check if overlap:
+		//overlap = param.start < contract.end && contract.start < param.end;
 
-		if (vehicles[_vehicleAddress].status == VehicleStatus.APPROVED) {
+		if (vehicles[_ownerAddress].status == VehicleStatus.APPROVED) {
 			for (uint256 i = 0; i < rentalAgreements.length; i++) {
-				if (rentalAgreements[i].getVehicleOwner() == _vehicleAddress) {
+				if (rentalAgreements[i].getVehicleOwner() == _ownerAddress) {
+					LigoAgreementsFactory.RentalAgreementStatus agreementStatus = rentalAgreements[
+							i
+						].getAgreementStatus();
 					if (
-						rentalAgreements[i].getAgreementStatus() ==
-						RentalAgreementFactory.RentalAgreementStatus.APPROVED ||
-						rentalAgreements[i].getAgreementStatus() ==
-						RentalAgreementFactory.RentalAgreementStatus.ACTIVE
+						agreementStatus ==
+						LigoAgreementsFactory.RentalAgreementStatus.APPROVED ||
+						agreementStatus ==
+						LigoAgreementsFactory.RentalAgreementStatus.ACTIVE
 					) {
 						//check for overlap
 						if (
 							_start <
 							rentalAgreements[i].getAgreementEndTime() &&
-							rentalAgreements[i].getAgreementStartTime() < _end
+							_end > rentalAgreements[i].getAgreementStartTime()
 						) {
 							//overlap found, return 0
-							return 0;
+							return false;
 						}
 					}
 				}
 			}
 		} else {
 			//vehicle not approved, return false
-			return 0;
+			return false;
 		}
 
 		//no clashes found, we can return  success
-		return 1;
+		return true;
 	}
 
 	/**
@@ -415,36 +422,17 @@ contract LigoAgreementsFactory is Ownable {
 	function returnAvailableVehicles(uint256 _start, uint256 _end)
 		public
 		view
-		returns (address[])
+		returns (address[] memory)
 	{
-		//algorithm works as follows: loop through all rental agreemets
-		//for each agreement, check if its our vehicle
-		//if its our vehicle, check if agreement is approved or active (proposed & completed/error not included)
-		//and if its approved or active, check if overlap:  overlap = param.start < contract.end && contract.start < param.end;
-		//if overlap, return 0
-		//else return 1
-
-		uint256 finalResultCount = 0;
-		//because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
-		for (uint256 i = 0; i < keyList.length; i++) {
-			//call function above for each key found
-			if (checkVehicleAvailable(keyList[i], _start, _end) > 0) {
-				//vehicle is available, add to final result count
-				finalResultCount = finalResultCount + 1;
-			}
-		}
-
 		//now we have the total count, we can create a memory array with the right size and then populate it
-		address[] memory addresses = new address[](finalResultCount);
-		uint256 addrCountInserted = 0;
+		address[] memory addresses;
 
 		for (uint256 j = 0; j < keyList.length; j++) {
 			//call function above for each key found
-			if (checkVehicleAvailable(keyList[j], _start, _end) > 0) {
+			if (isVehicleAvailable(keyList[j], _start, _end) == true) {
 				//vehicle is available, add to list
-				addresses[addrCountInserted] = keyList[j];
+				addresses.push(keyList[j]);
 			}
-			addrCountInserted = addrCountInserted + 1;
 		}
 
 		return addresses;
@@ -453,19 +441,19 @@ contract LigoAgreementsFactory is Ownable {
 	/**
 	 * @dev Return a list of all vehicle addresses
 	 */
-	function getVehicleAddresses() public view returns (address[]) {
+	function getVehicleAddresses() public view returns (address[] memory) {
 		return keyList;
 	}
 
 	/**
 	 * @dev Return a vehicle ID for a given vehicle address
 	 */
-	function getVehicleId(address _vehicleAddress)
+	function getVehicleId(address _vehicleOwnerAddress)
 		public
 		view
-		returns (uint256)
+		returns (string memory)
 	{
-		return vehicles[_vehicleAddress].vehicleId;
+		return vehicles[_vehicleOwnerAddress].vehicleId;
 	}
 
 	/**
@@ -473,15 +461,7 @@ contract LigoAgreementsFactory is Ownable {
 	 */
 	function endContractProvider() external payable onlyOwner {
 		LinkTokenInterface link = LinkTokenInterface(LINK_KOVAN);
-		require(
-			link.transfer(msg.sender, link.balanceOf(address(this))),
-			"Unable to transfer"
-		);
-		selfdestruct(dappWallet);
+		link.transfer(msg.sender, link.balanceOf(address(this)));
+		selfdestruct(owner());
 	}
-
-	/**
-	 * @dev fallback function, to receive ether
-	 */
-	function() external payable {}
 }
