@@ -275,46 +275,14 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	function activateRentalContractCallback(
 		bytes32 _requestId,
-		bytes32 _vehicleData
+		uint256 _startOdometer,
+		int256 _startLongitude,
+		int256 _startLatitude
 	) public recordChainlinkFulfillment(_requestId) {
-		//Set contract variables to start the agreement
-
-		//temporary variables required for converting to signed integer
-		int256 tmpStartLongitude;
-		int256 tmpStartLatitude;
-		string memory isStartLongitudeNegative; // "true" or "false"
-		string memory isStartLatitudeNegative; // "true" or "false"
-
-		//temp
-		// console.log("vehicle data - ", _vehicleData);
-
-		string memory dataInString = string(abi.encodePacked(_vehicleData));
-		string[] memory splitResults = splitData(dataInString);
-
-		//Now for each one, convert to uint
-		startOdometer = stringToUint(splitResults[0]);
-		tmpStartLongitude = int256(stringToUint(splitResults[1]));
-		isStartLongitudeNegative = splitResults[2];
-		tmpStartLatitude = int256(stringToUint(splitResults[3]));
-		isStartLatitudeNegative = splitResults[4];
-
-		if (
-			keccak256(abi.encodePacked(isStartLongitudeNegative)) ==
-			keccak256(abi.encodePacked("true"))
-		) {
-			tmpStartLongitude = tmpStartLongitude * (-1);
-		}
-
-		if (
-			keccak256(abi.encodePacked(isStartLatitudeNegative)) ==
-			keccak256(abi.encodePacked("true"))
-		) {
-			tmpStartLatitude = tmpStartLatitude * (-1);
-		}
-
-		//Now store location coordinates in signed variables.
-		startVehicleLongitude = tmpStartLongitude;
-		startVehicleLatitude = tmpStartLatitude;
+		//Now for each one, assign the given data
+		startOdometer = _startOdometer;
+		startVehicleLongitude = _startLongitude;
+		startVehicleLatitude = _startLatitude;
 
 		//Values have been set, now set the contract to ACTIVE
 		agreementStatus = RentalAgreementStatus.ACTIVE;
@@ -364,51 +332,16 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 * @dev Step 04b: Callback for getting vehicle data on ending a rental agreement. Based on results Contract becomes COMPELTED or ENDED_ERROR
 	 * Conditions for ending contract: Must be ACTIVE. Only this contract should be able to call this function
 	 */
-	function endRentalContractCallback(bytes32 _requestId, bytes32 _vehicleData)
-		public
-		recordChainlinkFulfillment(_requestId)
-	{
-		//Set contract variables to end the agreement
-
-		//temporary variables required for converting to signed integer
-		int256 tmpEndLongitude;
-		int256 tmpEndLatitude;
-		string memory isEndLongitudeNegative; // "true" or "false"
-		string memory isEndLatitudeNegative; // "true" or "false"
-
-		//first split the results into individual strings based on the delimiter
-		string memory dataInString = string(abi.encodePacked(_vehicleData));
-		string[] memory splitResults = splitData(dataInString);
-
-		//Now for each one, convert to uint
-		endOdometer = stringToUint(splitResults[0]);
-		tmpEndLongitude = int256(stringToUint(splitResults[1]));
-		isEndLongitudeNegative = splitResults[2];
-		tmpEndLatitude = int256(stringToUint(splitResults[3]));
-		isEndLatitudeNegative = splitResults[4];
-
-		//Now store location coordinates in signed variables. Will always be positive, but will check in the next step if need to make negative
-		endVehicleLongitude = int256(tmpEndLongitude);
-		endVehicleLatitude = int256(tmpEndLatitude);
-
-		//Finally, check first if longitude and latitude are negative numbers and multiply by -1 if so.
-		if (
-			keccak256(abi.encodePacked(isEndLongitudeNegative)) ==
-			keccak256(abi.encodePacked("true"))
-		) {
-			tmpEndLongitude = tmpEndLongitude * (-1);
-		}
-
-		if (
-			keccak256(abi.encodePacked(isEndLatitudeNegative)) ==
-			keccak256(abi.encodePacked("true"))
-		) {
-			tmpEndLatitude = tmpEndLatitude * (-1);
-		}
-
-		//Now store location coordinates in signed variables.
-		endVehicleLongitude = tmpEndLongitude;
-		endVehicleLatitude = tmpEndLatitude;
+	function endRentalContractCallback(
+		bytes32 _requestId,
+		uint256 _endOdometer,
+		int256 _endLongitude,
+		int256 _endLatitude
+	) public recordChainlinkFulfillment(_requestId) {
+		//Now for each one, assign the given data
+		endOdometer = _endOdometer;
+		endVehicleLongitude = _endLongitude;
+		endVehicleLatitude = _endLatitude;
 
 		//Set the end time of the contract
 		rentalAgreementEndDateTime = block.timestamp;
@@ -566,8 +499,15 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	 */
 	function forceEndRentalContractCallback(
 		bytes32 _requestId,
-		bytes32 _vehicleData
+		uint256 _endOdometer,
+		int256 _endLongitude,
+		int256 _endLatitude
 	) public recordChainlinkFulfillment(_requestId) {
+		//Now for each one, assign the given data
+		endOdometer = _endOdometer;
+		endVehicleLongitude = _endLongitude;
+		endVehicleLatitude = _endLatitude;
+
 		totalPlatformFee = totalRentCost / (100 / PLATFORM_FEE);
 
 		//now total rent payable is original amount minus calculated platform fee above
