@@ -216,7 +216,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 
 		//return any LINK tokens in here back to the DAPP wallet
 		LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
-		ink.transfer(owner(), link.balanceOf(address(this)));
+		link.transfer(owner(), link.balanceOf(address(this)));
 
 		//Set status to rejected. This is the end of the line for this agreement
 		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.REJECTED;

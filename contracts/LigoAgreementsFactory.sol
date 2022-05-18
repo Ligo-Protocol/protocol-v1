@@ -20,8 +20,10 @@ contract LigoAgreementsFactory is Ownable {
 	// TODO find job id
 	bytes32 JOB_ID = "";
 	// TODO find oracle contract and node address and fee amount
-	address private constant ORACLE_CONTRACT = 0x0;
-	address private constant NODE_ADDRESS = 0x0;
+	address private constant ORACLE_CONTRACT =
+		0xCE83D12d9613D9b0A2beE78c221474120c606b67; // not the right one
+	address private constant NODE_ADDRESS =
+		0xCE83D12d9613D9b0A2beE78c221474120c606b67;
 	uint256 private constant ORACLE_PAYMENT = 0;
 
 	// Kovan network link token
@@ -142,7 +144,7 @@ contract LigoAgreementsFactory is Ownable {
 
 		//start date must be < end date and must be at least 1 hour (3600 seconds)
 		require(
-			_endDateTime >= _startDateTim + 3600,
+			_endDateTime >= _startDateTime + 3600,
 			"Vehicle Agreement must be for a minimum of 1 hour"
 		);
 
@@ -204,7 +206,9 @@ contract LigoAgreementsFactory is Ownable {
 		);
 
 		// Send the ETH it owns
-		rentalAgreement.transfer(totalRentCostETH + bondRequiredETH);
+		payable(address(rentalAgreement)).transfer(
+			totalRentCostETH + bondRequiredETH
+		);
 
 		//store new agreement in array of agreements
 		rentalAgreements.push(rentalAgreement);
@@ -225,12 +229,12 @@ contract LigoAgreementsFactory is Ownable {
 	 */
 	function newVehicle(
 		address _vehicleOwner,
-		string _vehicleId,
+		string memory _vehicleId,
 		uint256 _baseHireFee,
 		uint256 _bondRequired,
 		Currency _ownerCurrency,
-		string _vehicleMake,
-		string _vehicleModel,
+		string memory _vehicleMake,
+		string memory _vehicleModel,
 		int256 _vehicleLongitude,
 		int256 _vehicleLatitude
 	) public {
@@ -328,37 +332,40 @@ contract LigoAgreementsFactory is Ownable {
 		view
 		returns (address[] memory)
 	{
-		// //loop through list of contracts, and find any belonging to the address & type (renter or vehicle owner)
-		// uint256 finalResultCount = 0;
+		//loop through list of contracts, and find any belonging to the address & type (renter or vehicle owner)
+		uint256 finalResultCount = 0;
 
-		// //because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
-		// for (uint256 i = 0; i < rentalAgreements.length; i++) {
-		// 	if (_isOwner == true) {
-		// 		//owner scenario
-		// 		if (rentalAgreements[i].getVehicleOwner() == _address) {
-		// 			finalResultCount = finalResultCount + 1;
-		// 		}
-		// 	} else {
-		// 		//renter scenario
-		// 		if (rentalAgreements[i].getVehicleRenter() == _address) {
-		// 			finalResultCount = finalResultCount + 1;
-		// 		}
-		// 	}
-		// }
+		//because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
+		for (uint256 i = 0; i < rentalAgreements.length; i++) {
+			if (_isOwner == true) {
+				//owner scenario
+				if (rentalAgreements[i].getVehicleOwner() == _address) {
+					finalResultCount = finalResultCount + 1;
+				}
+			} else {
+				//renter scenario
+				if (rentalAgreements[i].getVehicleRenter() == _address) {
+					finalResultCount = finalResultCount + 1;
+				}
+			}
+		}
 
 		//now we have the total count, we can create a memory array with the right size and then populate it
-		address[] memory addresses;
+		address[] memory addresses = new address[](finalResultCount);
+		uint256 addrCountInserted = 0;
 
 		for (uint256 j = 0; j < rentalAgreements.length; j++) {
 			if (_isOwner == true) {
 				//owner scenario
 				if (rentalAgreements[j].getVehicleOwner() == _address) {
-					addresses.push(address(rentalAgreements[j]));
+					addresses[addrCountInserted] = address(rentalAgreements[j]);
+					addrCountInserted = addrCountInserted + 1;
 				}
 			} else {
 				//renter scenario
 				if (rentalAgreements[j].getVehicleRenter() == _address) {
-					addresses.push(address(rentalAgreements[j]));
+					addresses[addrCountInserted] = address(rentalAgreements[j]);
+					addrCountInserted = addrCountInserted + 1;
 				}
 			}
 		}
@@ -424,14 +431,28 @@ contract LigoAgreementsFactory is Ownable {
 		view
 		returns (address[] memory)
 	{
+		//loop through list of contracts, and find available vehicles
+		uint256 finalResultCount = 0;
+
+		//because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
+		for (uint256 i = 0; i < keyList.length; i++) {
+			//call function above for each key found
+			if (isVehicleAvailable(keyList[i], _start, _end) == true) {
+				//vehicle is available, add to final result count
+				finalResultCount = finalResultCount + 1;
+			}
+		}
+
 		//now we have the total count, we can create a memory array with the right size and then populate it
-		address[] memory addresses;
+		address[] memory addresses = new address[](finalResultCount);
+		uint256 addrCountInserted = 0;
 
 		for (uint256 j = 0; j < keyList.length; j++) {
 			//call function above for each key found
 			if (isVehicleAvailable(keyList[j], _start, _end) == true) {
 				//vehicle is available, add to list
-				addresses.push(keyList[j]);
+				addresses[addrCountInserted] = keyList[j];
+				addrCountInserted = addrCountInserted + 1;
 			}
 		}
 
@@ -462,6 +483,6 @@ contract LigoAgreementsFactory is Ownable {
 	function endContractProvider() external payable onlyOwner {
 		LinkTokenInterface link = LinkTokenInterface(LINK_KOVAN);
 		link.transfer(msg.sender, link.balanceOf(address(this)));
-		selfdestruct(owner());
+		selfdestruct(payable(owner()));
 	}
 }
