@@ -291,7 +291,7 @@ contract LigoAgreementsFactory is Ownable {
 	/**
 	 * @dev Return all rental contract addresses
 	 */
-	function getRentalContracts()
+	function getAllRentalContracts()
 		external
 		view
 		returns (LigoRentalAgreement[] memory)
@@ -327,7 +327,7 @@ contract LigoAgreementsFactory is Ownable {
 	 * @dev Return a list of rental contract addresses belonging to a particular vehicle owner or renter
 	 *      ownerRenter = 0 means vehicle owner, 1 = vehicle renter
 	 */
-	function getRentalContracts(bool _isOwner, address _address)
+	function getRentalContractsByUser(bool _isOwner, address _address)
 		external
 		view
 		returns (address[] memory)
