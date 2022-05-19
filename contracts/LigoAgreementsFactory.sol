@@ -2,21 +2,11 @@
 pragma solidity ^0.8.7;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import "hardhat/console.sol";
 
 import "./LigoRentalAgreement.sol";
 
 contract LigoAgreementsFactory is Ownable {
-	enum RentalAgreementStatus {
-		PROPOSED,
-		APPROVED,
-		REJECTED,
-		ACTIVE,
-		COMPLETED,
-		ENDED_ERROR
-	}
-
 	// TODO find job id
 	bytes32 JOB_ID = "";
 	// TODO find oracle contract and node address and fee amount
@@ -29,49 +19,33 @@ contract LigoAgreementsFactory is Ownable {
 	// Kovan network link token
 	address private constant LINK_KOVAN =
 		0xa36085F69e2889c224210F603D836748e7dC0088;
-	// Kovan network eth-usd price feed
-	address private constant ETH_USD_CONTRACT =
-		0x9326BFA02ADD2366b30bacB125260Af641031331;
 
-	enum VehicleStatus {
-		PENDING,
-		APPROVED
-	}
-
-	enum Currency {
-		ETH,
-		USD
+	enum RentalAgreementStatus {
+		PROPOSED,
+		APPROVED,
+		REJECTED,
+		ACTIVE,
+		COMPLETED,
+		ENDED_ERROR
 	}
 
 	struct Vehicle {
 		string vehicleId;
 		address ownerAddress;
-		uint256 baseHireFee;
+		uint256 baseHourFee;
 		uint256 bondRequired;
-		Currency ownerCurrency;
-		string vehicleMake;
+		string vehiclePlate;
 		string vehicleModel;
 		int256 vehicleLongitude;
 		int256 vehicleLatitude;
-		VehicleStatus status;
 	}
 
 	address[] internal keyList;
-
-	AggregatorV3Interface internal ethUsdPriceFeed;
-
-	mapping(address => Vehicle) public vehicles;
-
+	mapping(string => Vehicle) public idsToVehicle;
+	mapping(address => Vehicle[]) public vehicles;
 	LigoRentalAgreement[] public rentalAgreements;
 
-	modifier onlyNode() {
-		require(NODE_ADDRESS == msg.sender, "Only Node can call this function");
-		_;
-	}
-
-	constructor() payable {
-		ethUsdPriceFeed = AggregatorV3Interface(ETH_USD_CONTRACT);
-	}
+	constructor() payable {}
 
 	event rentalAgreementCreated(
 		address _newAgreement,
@@ -81,53 +55,51 @@ contract LigoAgreementsFactory is Ownable {
 	event vehicleAdded(
 		string _vehicleId,
 		address _vehicleOwner,
-		uint256 _baseHireFee,
+		uint256 _baseHourFee,
 		uint256 _bondRequired,
-		Currency _ownerCurrency,
-		string _vehicleMake,
+		string _vehiclePlate,
 		string _vehicleModel,
 		int256 _vehicleLongitude,
 		int256 _vehicleLatitude
 	);
 
-	function getLatestEthUsdPrice() public view returns (int256) {
-		(, int256 price, , , ) = ethUsdPriceFeed.latestRoundData();
-		return price;
-	}
+	/**
+	 * @dev Create a new Vehicle.
+	 */
+	function newVehicle(
+		address _vehicleOwner,
+		string memory _vehicleId,
+		uint256 _baseHourFee,
+		uint256 _bondRequired,
+		string memory _vehiclePlate,
+		string memory _vehicleModel,
+		int256 _vehicleLongitude,
+		int256 _vehicleLatitude
+	) public {
+		//adds a vehicle and stores it in the vehicles mapping. Each vehicle is represented by 1 Ethereum address
 
-	function convertEthToFiat(uint256 _value, Currency _toCurrency)
-		public
-		view
-		returns (uint256)
-	{
-		if (_toCurrency == Currency.ETH) {
-			return _value;
-		}
+		Vehicle memory v;
+		v.vehicleId = _vehicleId;
+		v.ownerAddress = _vehicleOwner;
+		v.baseHourFee = _baseHourFee;
+		v.bondRequired = _bondRequired;
+		v.vehiclePlate = _vehiclePlate;
+		v.vehicleModel = _vehicleModel;
+		v.vehicleLongitude = _vehicleLongitude;
+		v.vehicleLatitude = _vehicleLatitude;
 
-		uint256 ethUsdPrice = uint256(getLatestEthUsdPrice());
-		uint256 inUsd = (_value * ethUsdPrice) / 1 ether;
-		if (_toCurrency == Currency.USD) {
-			return inUsd;
-		}
-		return _value;
-	}
+		idsToVehicle[_vehicleId] = v;
 
-	function convertFiatToEth(uint256 _value, Currency _fromCurrency)
-		public
-		view
-		returns (uint256)
-	{
-		if (_fromCurrency == Currency.ETH) {
-			return _value;
-		}
-
-		uint256 ethUsdPrice = uint256(getLatestEthUsdPrice());
-		uint256 fromUsd = (_value * 1 ether) / ethUsdPrice;
-		if (_fromCurrency == Currency.USD) {
-			return fromUsd;
-		}
-
-		return _value;
+		emit vehicleAdded(
+			_vehicleId,
+			_vehicleOwner,
+			_baseHourFee,
+			_bondRequired,
+			_vehiclePlate,
+			_vehicleModel,
+			_vehicleLongitude,
+			_vehicleLatitude
+		);
 	}
 
 	/**
@@ -136,6 +108,7 @@ contract LigoAgreementsFactory is Ownable {
 	function newRentalAgreement(
 		address _vehicleOwner,
 		address _renter,
+		string memory _vehicleId,
 		uint256 _startDateTime,
 		uint256 _endDateTime
 	) public payable returns (address) {
@@ -154,42 +127,21 @@ contract LigoAgreementsFactory is Ownable {
 			"Vehicle Agreement must be for a discrete number of hours"
 		);
 
-		//vehicle to be rented must be in APPROVED status
-		require(
-			vehicles[_vehicleOwner].status == VehicleStatus.APPROVED,
-			"Vehicle is not approved"
-		);
-
 		//ensure start date is now or in the future
 		require(
 			_startDateTime >= block.timestamp,
 			"Vehicle Agreement cannot be in the past"
 		);
 
-		// Ensure correct amount of ETH has been sent for total rent cost & bond
-		uint256 convertedMsgValue = convertEthToFiat(
-			msg.value,
-			vehicles[_vehicleOwner].ownerCurrency
-		);
-		uint256 totalRentCost = vehicles[_vehicleOwner].baseHireFee *
-			((_endDateTime - _startDateTime) / 3600);
-		uint256 bondRequired = vehicles[_vehicleOwner].bondRequired;
+		uint256 totalRentCost = vehicles[_vehicleOwner][_vehicleId]
+			.baseHourFee * ((_endDateTime - _startDateTime) / 3600);
+		uint256 bondRequired = vehicles[_vehicleOwner][_vehicleId].bondRequired;
 
-		//add 1% tolerance to account for rounding & fluctuations in case a round just ended in price feed
+		// ensure the renter has deposited enough ETH
 		require(
-			convertedMsgValue + (convertedMsgValue / 100) >=
-				totalRentCost + bondRequired,
+			msg.value >= totalRentCost + bondRequired,
 			"Insufficient rent & bond paid"
 		);
-
-		// Now that we've determined the ETH passed in is correct, we need to calculate bond + fee values in ETH to send to contract
-		uint256 bondRequiredETH = convertFiatToEth(
-			bondRequired,
-			vehicles[_vehicleOwner].ownerCurrency
-		);
-
-		// Fee value is total value minus bond. We've already validated enough ETH has been sent
-		uint256 totalRentCostETH = msg.value - bondRequiredETH;
 
 		//create new Rental Agreement
 		LigoRentalAgreement rentalAgreement = new LigoRentalAgreement(
@@ -197,8 +149,8 @@ contract LigoAgreementsFactory is Ownable {
 			_renter,
 			_startDateTime,
 			_endDateTime,
-			totalRentCostETH,
-			bondRequiredETH,
+			totalRentCost,
+			bondRequired,
 			LINK_KOVAN,
 			ORACLE_CONTRACT,
 			ORACLE_PAYMENT,
@@ -207,7 +159,7 @@ contract LigoAgreementsFactory is Ownable {
 
 		// Send the ETH it owns
 		payable(address(rentalAgreement)).transfer(
-			totalRentCostETH + bondRequiredETH
+			totalRentCost + bondRequired
 		);
 
 		//store new agreement in array of agreements
@@ -222,59 +174,6 @@ contract LigoAgreementsFactory is Ownable {
 		link.transfer(address(rentalAgreement), 1 ether);
 
 		return address(rentalAgreement);
-	}
-
-	/**
-	 * @dev Create a new Vehicle.
-	 */
-	function newVehicle(
-		address _vehicleOwner,
-		string memory _vehicleId,
-		uint256 _baseHireFee,
-		uint256 _bondRequired,
-		Currency _ownerCurrency,
-		string memory _vehicleMake,
-		string memory _vehicleModel,
-		int256 _vehicleLongitude,
-		int256 _vehicleLatitude
-	) public {
-		//adds a vehicle and stores it in the vehicles mapping. Each vehicle is represented by 1 Ethereum address
-
-		Vehicle memory v;
-		v.vehicleId = _vehicleId;
-		v.ownerAddress = _vehicleOwner;
-		v.baseHireFee = _baseHireFee;
-		v.bondRequired = _bondRequired;
-		v.ownerCurrency = _ownerCurrency;
-		v.vehicleMake = _vehicleMake;
-		v.vehicleModel = _vehicleModel;
-		v.vehicleLongitude = _vehicleLongitude;
-		v.vehicleLatitude = _vehicleLatitude;
-		v.status = VehicleStatus.PENDING;
-
-		vehicles[_vehicleOwner] = v;
-
-		emit vehicleAdded(
-			_vehicleId,
-			_vehicleOwner,
-			_baseHireFee,
-			_bondRequired,
-			_ownerCurrency,
-			_vehicleMake,
-			_vehicleModel,
-			_vehicleLongitude,
-			_vehicleLatitude
-		);
-	}
-
-	/**
-	 * @dev Approves a vehicle for use in the app. Only a Chainlink node can call this, as it knows if the test to the smartcar servers was
-	 * successful or not
-	 */
-	function approveVehicle(address _walletOwner) public onlyNode {
-		vehicles[_walletOwner].status = VehicleStatus.APPROVED;
-		//store the key in an array where we can loop through. At this point the vehicle will be returned in searched
-		keyList.push(_walletOwner);
 	}
 
 	/**
@@ -390,33 +289,27 @@ contract LigoAgreementsFactory is Ownable {
 		//and if its approved or active, check if overlap:
 		//overlap = param.start < contract.end && contract.start < param.end;
 
-		if (vehicles[_ownerAddress].status == VehicleStatus.APPROVED) {
-			for (uint256 i = 0; i < rentalAgreements.length; i++) {
-				if (rentalAgreements[i].getVehicleOwner() == _ownerAddress) {
-					LigoAgreementsFactory.RentalAgreementStatus agreementStatus = rentalAgreements[
-							i
-						].getAgreementStatus();
+		for (uint256 i = 0; i < rentalAgreements.length; i++) {
+			if (rentalAgreements[i].getVehicleOwner() == _ownerAddress) {
+				LigoAgreementsFactory.RentalAgreementStatus agreementStatus = rentalAgreements[
+						i
+					].getAgreementStatus();
+				if (
+					agreementStatus ==
+					LigoAgreementsFactory.RentalAgreementStatus.APPROVED ||
+					agreementStatus ==
+					LigoAgreementsFactory.RentalAgreementStatus.ACTIVE
+				) {
+					//check for overlap
 					if (
-						agreementStatus ==
-						LigoAgreementsFactory.RentalAgreementStatus.APPROVED ||
-						agreementStatus ==
-						LigoAgreementsFactory.RentalAgreementStatus.ACTIVE
+						_start < rentalAgreements[i].getAgreementEndTime() &&
+						_end > rentalAgreements[i].getAgreementStartTime()
 					) {
-						//check for overlap
-						if (
-							_start <
-							rentalAgreements[i].getAgreementEndTime() &&
-							_end > rentalAgreements[i].getAgreementStartTime()
-						) {
-							//overlap found, return 0
-							return false;
-						}
+						//overlap found, return 0
+						return false;
 					}
 				}
 			}
-		} else {
-			//vehicle not approved, return false
-			return false;
 		}
 
 		//no clashes found, we can return  success
