@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: MIT
+//SPDX-License-Identifier: MITKOVAN
 pragma solidity ^0.8.7;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -7,26 +7,19 @@ import "hardhat/console.sol";
 import "./LigoRentalAgreement.sol";
 
 contract LigoAgreementsFactory is Ownable {
-	// TODO find job id
-	bytes32 JOB_ID = "";
-	// TODO find oracle contract and node address and fee amount
-	address private constant ORACLE_CONTRACT =
-		0xCE83D12d9613D9b0A2beE78c221474120c606b67; // not the right one
-	address private constant NODE_ADDRESS =
-		0xCE83D12d9613D9b0A2beE78c221474120c606b67;
-	uint256 private constant ORACLE_PAYMENT = 0;
-
-	// Kovan network link token
-	address private constant LINK_KOVAN =
-		0xa36085F69e2889c224210F603D836748e7dC0088;
+	// TODO find job id, oracle contract and fee amount
+	bytes32 private JOB_ID;
+	address private ORACLE_CONTRACT;
+	uint256 private ORACLE_PAYMENT;
+	address private NODE_ADDRESS; // 0xCE83D12d9613D9b0A2beE78c221474120c606b67
+	address private LINK_TOKEN; // KOVAN -> 0xa36085F69e2889c224210F603D836748e7dC0088
 
 	enum RentalAgreementStatus {
 		PROPOSED,
 		APPROVED,
 		REJECTED,
 		ACTIVE,
-		COMPLETED,
-		ENDED_ERROR
+		COMPLETED
 	}
 
 	struct Vehicle {
@@ -41,7 +34,19 @@ contract LigoAgreementsFactory is Ownable {
 	mapping(string => Vehicle) internal idsToVehicles;
 	LigoRentalAgreement[] internal rentalAgreements;
 
-	constructor() payable {}
+	constructor(
+		bytes32 _jobId,
+		address _oracleContract,
+		uint256 _oraclePayment,
+		address _nodeAddress,
+		address _linkToken
+	) {
+		JOB_ID = _jobId;
+		ORACLE_CONTRACT = _oracleContract;
+		ORACLE_PAYMENT = _oraclePayment;
+		NODE_ADDRESS = _nodeAddress;
+		LINK_TOKEN = _linkToken;
+	}
 
 	event rentalAgreementCreated(
 		address _newAgreement,
@@ -132,11 +137,12 @@ contract LigoAgreementsFactory is Ownable {
 		LigoRentalAgreement rentalAgreement = new LigoRentalAgreement(
 			_vehicleOwner,
 			_renter,
+			_vehicleId,
 			_startDateTime,
 			_endDateTime,
 			totalRentCost,
 			bondRequired,
-			LINK_KOVAN,
+			LINK_TOKEN,
 			ORACLE_CONTRACT,
 			ORACLE_PAYMENT,
 			JOB_ID
@@ -174,9 +180,22 @@ contract LigoAgreementsFactory is Ownable {
 	function getVehicle(string memory _vehicleId)
 		external
 		view
-		returns (Vehicle memory)
+		returns (
+			string memory,
+			string memory,
+			address,
+			uint256,
+			uint256
+		)
 	{
-		return idsToVehicles[_vehicleId];
+		Vehicle memory v = idsToVehicles[_vehicleId];
+		return (
+			v.vehicleId,
+			v.filecoinCid,
+			v.ownerAddress,
+			v.baseHourFee,
+			v.bondRequired
+		);
 	}
 
 	/**
@@ -257,7 +276,7 @@ contract LigoAgreementsFactory is Ownable {
 	 * @dev Function to end provider contract, in case of bugs or needing to update logic etc, funds are returned to dapp owner, including any remaining LINK tokens
 	 */
 	function endContractProvider() external payable onlyOwner {
-		LinkTokenInterface link = LinkTokenInterface(LINK_KOVAN);
+		LinkTokenInterface link = LinkTokenInterface(LINK_TOKEN);
 		link.transfer(msg.sender, link.balanceOf(address(this)));
 		selfdestruct(payable(owner()));
 	}

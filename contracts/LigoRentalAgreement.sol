@@ -26,6 +26,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 
 	address payable private vehicleOwner;
 	address payable private renter;
+	string private vehicleId;
 	uint256 private startDateTime;
 	uint256 private endDateTime;
 	uint256 private totalRentCost;
@@ -53,13 +54,14 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	uint256 private totalBondReturned = 0;
 	uint256 private bondForfeited = 0;
 
-	uint256 private oraclePaymentAmount;
-	bytes32 private jobId;
+	bytes32 private JOB_ID;
+	uint256 private ORACLE_PAYMENT;
 
 	//List of events
 	event rentalAgreementCreated(
 		address _vehicleOwner,
 		address _renter,
+		string _vehicleId,
 		uint256 _startDateTime,
 		uint256 _endDateTime,
 		uint256 _totalRentCost,
@@ -71,11 +73,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		int256 _startVehicleLatitude
 	);
 	event contractCompleted(
-		uint256 _endOdometer,
-		int256 _endVehicleLongitude,
-		int256 _endVehicleLatitide
-	);
-	event contractCompletedError(
 		uint256 _endOdometer,
 		int256 _endVehicleLongitude,
 		int256 _endVehicleLatitide
@@ -154,6 +151,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	constructor(
 		address _vehicleOwner,
 		address _renter,
+		string memory _vehicleId,
 		uint256 _startDateTime,
 		uint256 _endDateTime,
 		uint256 _totalRentCost,
@@ -172,12 +170,13 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		//initialize variables required for Chainlink Node interaction
 		setChainlinkToken(_link);
 		setChainlinkOracle(_oracle);
-		jobId = _jobId;
-		oraclePaymentAmount = _oraclePaymentAmount;
+		JOB_ID = _jobId;
+		ORACLE_PAYMENT = _oraclePaymentAmount;
 
 		//now initialize values for the contract
 		vehicleOwner = payable(_vehicleOwner);
 		renter = payable(_renter);
+		vehicleId = _vehicleId;
 		startDateTime = _startDateTime;
 		endDateTime = _endDateTime;
 		totalRentCost = _totalRentCost;
@@ -185,12 +184,13 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.PROPOSED;
 
 		emit rentalAgreementCreated(
-			vehicleOwner,
-			renter,
-			startDateTime,
-			endDateTime,
-			totalRentCost,
-			totalBond
+			_vehicleOwner,
+			_renter,
+			_vehicleId,
+			_startDateTime,
+			_endDateTime,
+			_totalRentCost,
+			_totalBond
 		);
 	}
 
@@ -240,25 +240,16 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			"Start Date/Time has not been reached"
 		);
 
-		//get vehicle ID of the vehicle, needed for the request
-		string memory vid = LigoAgreementsFactory(owner()).getVehicleId(
-			vehicleOwner
-		);
-
 		//call to chainlink node job to wake up the car, get starting vehicle data, then unlock the car
 		Chainlink.Request memory req = buildChainlinkRequest(
-			jobId,
+			JOB_ID,
 			address(this),
 			this.activateRentalContractCallback.selector
 		);
-		req.add("vehicleId", vid);
+		req.add("vehicleId", vehicleId);
 		req.add("encToken", _encToken);
 		req.add("action", "unlock");
-		sendChainlinkRequestTo(
-			chainlinkOracleAddress(),
-			req,
-			oraclePaymentAmount
-		);
+		sendChainlinkRequestTo(chainlinkOracleAddress(), req, ORACLE_PAYMENT);
 	}
 
 	/**
@@ -289,7 +280,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	}
 
 	/**
-	 * @dev Step 04a: Renter ends an active contract, contract becomes COMPLETED or ENDED_ERROR
+	 * @dev Step 04a: Renter ends an active contract, contract becomes COMPLETED
 	 * Conditions for ending contract: Must be ACTIVE
 	 */
 	function endRentalContract(string memory _encToken)
@@ -297,32 +288,22 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		onlyRenter
 		onlyContractActive
 	{
-		//First we need to check if vehicle can be accessed, if so then do a call to get vehicle data
-
-		//get vehicle ID of the vehicle, needed for the request
-		string memory vid = LigoAgreementsFactory(owner()).getVehicleId(
-			vehicleOwner
-		);
-
 		//call to chainlink node job to wake up the car, get ending vehicle data, then lock the car
 		Chainlink.Request memory req = buildChainlinkRequest(
-			jobId,
+			JOB_ID,
 			address(this),
 			this.endRentalContractCallback.selector
 		);
 
-		req.add("vehicleId", vid);
+		req.add("vehicleId", vehicleId);
 		req.add("encToken", _encToken);
 		req.add("action", "lock");
-		sendChainlinkRequestTo(
-			chainlinkOracleAddress(),
-			req,
-			oraclePaymentAmount
-		);
+		sendChainlinkRequestTo(chainlinkOracleAddress(), req, ORACLE_PAYMENT);
 	}
 
+	//temp continue here and at the end of contract send back link
 	/**
-	 * @dev Step 04b: Callback for getting vehicle data on ending a rental agreement. Based on results Contract becomes COMPELTED or ENDED_ERROR
+	 * @dev Step 04b: Callback for getting vehicle data on ending a rental agreement. Based on results Contract becomes COMPELTED
 	 * Conditions for ending contract: Must be ACTIVE. Only this contract should be able to call this function
 	 */
 	function endRentalContractCallback(
@@ -445,83 +426,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 
 		//Emit an event now that contract is now ended
 		emit contractCompleted(
-			endOdometer,
-			endVehicleLongitude,
-			endVehicleLatitude
-		);
-	}
-
-	/**
-	 * @dev Step 04c: Car Owner ends an active contract due to the Renter not ending it, contract becomes ENDED_ERROR
-	 * Conditions for ending contract: Must be ACTIVE, & End Date must be in the past more than the current defined TIME_BUFFER value
-	 */
-	function forceEndRentalContract(string memory _encToken)
-		external
-		onlyVehicleOwner
-		onlyContractActive
-	{
-		//don't allow unless contract still active & current time is > contract end date + TIME_BUFFER
-		require(
-			block.timestamp > endDateTime + TIME_BUFFER,
-			"Agreement not eligible for forced cancellation yet"
-		);
-
-		//get vehicle ID of the vehicle, needed for the request
-		string memory vid = LigoAgreementsFactory(owner()).getVehicleId(
-			vehicleOwner
-		);
-
-		//call to chainlink node job to wake up the car, get ending vehicle data
-		Chainlink.Request memory req = buildChainlinkRequest(
-			jobId,
-			address(this),
-			this.forceEndRentalContractCallback.selector
-		);
-		req.add("vehicleId", vid);
-		req.add("encToken", _encToken);
-		req.add("action", "vehicle_data");
-		sendChainlinkRequestTo(
-			chainlinkOracleAddress(),
-			req,
-			oraclePaymentAmount
-		);
-	}
-
-	/**
-	 * @dev Step 04d: Callback for force ending a vehicle agreement. Based on results Contract becomes ENDED_ERROR
-	 */
-	function forceEndRentalContractCallback(
-		bytes32 _requestId,
-		uint256 _endOdometer,
-		int256 _endLongitude,
-		int256 _endLatitude
-	) public recordChainlinkFulfillment(_requestId) {
-		//Now for each one, assign the given data
-		endOdometer = _endOdometer;
-		endVehicleLongitude = _endLongitude;
-		endVehicleLatitude = _endLatitude;
-
-		totalPlatformFee = totalRentCost / (100 / PLATFORM_FEE);
-
-		//now total rent payable is original amount minus calculated platform fee above
-		totalRentPayable = totalRentCost - totalPlatformFee;
-		bondForfeited = totalBond;
-
-		//Now that we have all fees & charges calculated, perform necessary transfers & then end contract
-		//first pay platform fee
-		payable(owner()).transfer(totalPlatformFee);
-
-		//then pay vehicle owner rent payable and bond owed
-		uint256 totalAmoutToPayForOwner = totalRentPayable + bondForfeited;
-		vehicleOwner.transfer(totalAmoutToPayForOwner);
-
-		//Transfers all completed, now we just need to set contract status to successfully completed
-		agreementStatus = LigoAgreementsFactory
-			.RentalAgreementStatus
-			.ENDED_ERROR;
-
-		//Emit an event now that contract is now ended
-		emit contractCompletedError(
 			endOdometer,
 			endVehicleLongitude,
 			endVehicleLatitude
