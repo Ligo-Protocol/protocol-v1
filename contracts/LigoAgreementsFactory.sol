@@ -31,19 +31,15 @@ contract LigoAgreementsFactory is Ownable {
 
 	struct Vehicle {
 		string vehicleId;
+		string filecoinCid;
 		address ownerAddress;
 		uint256 baseHourFee;
 		uint256 bondRequired;
-		string vehiclePlate;
-		string vehicleModel;
-		int256 vehicleLongitude;
-		int256 vehicleLatitude;
 	}
 
-	address[] internal keyList;
-	mapping(string => Vehicle) public idsToVehicle;
-	mapping(address => Vehicle[]) public vehicles;
-	LigoRentalAgreement[] public rentalAgreements;
+	string[] internal vehicleIds;
+	mapping(string => Vehicle) internal idsToVehicles;
+	LigoRentalAgreement[] internal rentalAgreements;
 
 	constructor() payable {}
 
@@ -54,51 +50,40 @@ contract LigoAgreementsFactory is Ownable {
 
 	event vehicleAdded(
 		string _vehicleId,
+		string _filecoinCid,
 		address _vehicleOwner,
 		uint256 _baseHourFee,
-		uint256 _bondRequired,
-		string _vehiclePlate,
-		string _vehicleModel,
-		int256 _vehicleLongitude,
-		int256 _vehicleLatitude
+		uint256 _bondRequired
 	);
 
 	/**
 	 * @dev Create a new Vehicle.
 	 */
 	function newVehicle(
-		address _vehicleOwner,
 		string memory _vehicleId,
+		string memory _filecoinCid,
+		address _vehicleOwner,
 		uint256 _baseHourFee,
-		uint256 _bondRequired,
-		string memory _vehiclePlate,
-		string memory _vehicleModel,
-		int256 _vehicleLongitude,
-		int256 _vehicleLatitude
+		uint256 _bondRequired
 	) public {
 		//adds a vehicle and stores it in the vehicles mapping. Each vehicle is represented by 1 Ethereum address
 
 		Vehicle memory v;
 		v.vehicleId = _vehicleId;
+		v.filecoinCid = _filecoinCid;
 		v.ownerAddress = _vehicleOwner;
 		v.baseHourFee = _baseHourFee;
 		v.bondRequired = _bondRequired;
-		v.vehiclePlate = _vehiclePlate;
-		v.vehicleModel = _vehicleModel;
-		v.vehicleLongitude = _vehicleLongitude;
-		v.vehicleLatitude = _vehicleLatitude;
 
-		idsToVehicle[_vehicleId] = v;
+		idsToVehicles[_vehicleId] = v;
+		vehicleIds.push(_vehicleId);
 
 		emit vehicleAdded(
 			_vehicleId,
+			_filecoinCid,
 			_vehicleOwner,
 			_baseHourFee,
-			_bondRequired,
-			_vehiclePlate,
-			_vehicleModel,
-			_vehicleLongitude,
-			_vehicleLatitude
+			_bondRequired
 		);
 	}
 
@@ -106,9 +91,9 @@ contract LigoAgreementsFactory is Ownable {
 	 * @dev Create a new Rental Agreement. Once it's created, all logic & flow is handled from within the LigoRentalAgreement Contract
 	 */
 	function newRentalAgreement(
+		string memory _vehicleId,
 		address _vehicleOwner,
 		address _renter,
-		string memory _vehicleId,
 		uint256 _startDateTime,
 		uint256 _endDateTime
 	) public payable returns (address) {
@@ -133,9 +118,9 @@ contract LigoAgreementsFactory is Ownable {
 			"Vehicle Agreement cannot be in the past"
 		);
 
-		uint256 totalRentCost = vehicles[_vehicleOwner][_vehicleId]
-			.baseHourFee * ((_endDateTime - _startDateTime) / 3600);
-		uint256 bondRequired = vehicles[_vehicleOwner][_vehicleId].bondRequired;
+		uint256 totalRentCost = idsToVehicles[_vehicleId].baseHourFee *
+			((_endDateTime - _startDateTime) / 3600);
+		uint256 bondRequired = idsToVehicles[_vehicleId].bondRequired;
 
 		// ensure the renter has deposited enough ETH
 		require(
@@ -177,25 +162,21 @@ contract LigoAgreementsFactory is Ownable {
 	}
 
 	/**
-	 * @dev Return a particular Vehicle struct based on a wallet address
+	 * @dev Return a list of all vehicle ids
 	 */
-	function getVehicle(address _walletOwner)
+	function getVehicleIds() public view returns (string[] memory) {
+		return vehicleIds;
+	}
+
+	/**
+	 * @dev Return a particular Vehicle struct based on a its id
+	 */
+	function getVehicle(string memory _vehicleId)
 		external
 		view
 		returns (Vehicle memory)
 	{
-		return vehicles[_walletOwner];
-	}
-
-	/**
-	 * @dev Return all rental contract addresses
-	 */
-	function getAllRentalContracts()
-		external
-		view
-		returns (LigoRentalAgreement[] memory)
-	{
-		return rentalAgreements;
+		return idsToVehicles[_vehicleId];
 	}
 
 	/**
@@ -270,104 +251,6 @@ contract LigoAgreementsFactory is Ownable {
 		}
 
 		return addresses;
-	}
-
-	/**
-	 * @dev Function that takes a vehicle ID/address, start & end epochs and then searches through to see if
-	 *      vehicle is available during those dates or not
-	 */
-	function isVehicleAvailable(
-		address _ownerAddress,
-		uint256 _start,
-		uint256 _end
-	) public view returns (bool) {
-		//algorithm works as follows:
-		//vehicle needs to be in approved status otherwise return false
-		//loop through all rental agreemets
-		//for each agreement, check if its our vehicle
-		//if its our vehicle, check if agreement is approved or active (proposed & completed/error not included)
-		//and if its approved or active, check if overlap:
-		//overlap = param.start < contract.end && contract.start < param.end;
-
-		for (uint256 i = 0; i < rentalAgreements.length; i++) {
-			if (rentalAgreements[i].getVehicleOwner() == _ownerAddress) {
-				LigoAgreementsFactory.RentalAgreementStatus agreementStatus = rentalAgreements[
-						i
-					].getAgreementStatus();
-				if (
-					agreementStatus ==
-					LigoAgreementsFactory.RentalAgreementStatus.APPROVED ||
-					agreementStatus ==
-					LigoAgreementsFactory.RentalAgreementStatus.ACTIVE
-				) {
-					//check for overlap
-					if (
-						_start < rentalAgreements[i].getAgreementEndTime() &&
-						_end > rentalAgreements[i].getAgreementStartTime()
-					) {
-						//overlap found, return 0
-						return false;
-					}
-				}
-			}
-		}
-
-		//no clashes found, we can return  success
-		return true;
-	}
-
-	/**
-	 * @dev Function that takes a start & end epochs and then returns all vehicle addresses that are available
-	 */
-	function returnAvailableVehicles(uint256 _start, uint256 _end)
-		public
-		view
-		returns (address[] memory)
-	{
-		//loop through list of contracts, and find available vehicles
-		uint256 finalResultCount = 0;
-
-		//because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
-		for (uint256 i = 0; i < keyList.length; i++) {
-			//call function above for each key found
-			if (isVehicleAvailable(keyList[i], _start, _end) == true) {
-				//vehicle is available, add to final result count
-				finalResultCount = finalResultCount + 1;
-			}
-		}
-
-		//now we have the total count, we can create a memory array with the right size and then populate it
-		address[] memory addresses = new address[](finalResultCount);
-		uint256 addrCountInserted = 0;
-
-		for (uint256 j = 0; j < keyList.length; j++) {
-			//call function above for each key found
-			if (isVehicleAvailable(keyList[j], _start, _end) == true) {
-				//vehicle is available, add to list
-				addresses[addrCountInserted] = keyList[j];
-				addrCountInserted = addrCountInserted + 1;
-			}
-		}
-
-		return addresses;
-	}
-
-	/**
-	 * @dev Return a list of all vehicle addresses
-	 */
-	function getVehicleAddresses() public view returns (address[] memory) {
-		return keyList;
-	}
-
-	/**
-	 * @dev Return a vehicle ID for a given vehicle address
-	 */
-	function getVehicleId(address _vehicleOwnerAddress)
-		public
-		view
-		returns (string memory)
-	{
-		return vehicles[_vehicleOwnerAddress].vehicleId;
 	}
 
 	/**
