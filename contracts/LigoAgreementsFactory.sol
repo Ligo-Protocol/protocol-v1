@@ -30,9 +30,24 @@ contract LigoAgreementsFactory is Ownable {
 		uint256 bondRequired;
 	}
 
+	struct Agreement {
+		address vehicleOwner;
+		address renter;
+		string vehicleId;
+		uint256 startDateTime;
+		uint256 endDateTime;
+		uint256 totalRentCost;
+		uint256 bondRequired;
+		address linkToken;
+		address oracleContract;
+		uint256 oraclePayment;
+		bytes32 jobId;
+	}
+
 	string[] internal vehicleIds;
 	mapping(string => Vehicle) internal idsToVehicles;
-	LigoRentalAgreement[] internal rentalAgreements;
+	mapping(address => address[]) internal ownerToAgreementsAddresses;
+	mapping(address => address[]) internal renterToAgreementsAddresses;
 
 	constructor(
 		bytes32 _jobId,
@@ -72,15 +87,14 @@ contract LigoAgreementsFactory is Ownable {
 		uint256 _bondRequired
 	) public {
 		//adds a vehicle and stores it in the vehicles mapping. Each vehicle is represented by 1 Ethereum address
+		idsToVehicles[_vehicleId] = Vehicle(
+			_vehicleId,
+			_filecoinCid,
+			_vehicleOwner,
+			_baseHourFee,
+			_bondRequired
+		);
 
-		Vehicle memory v;
-		v.vehicleId = _vehicleId;
-		v.filecoinCid = _filecoinCid;
-		v.ownerAddress = _vehicleOwner;
-		v.baseHourFee = _baseHourFee;
-		v.bondRequired = _bondRequired;
-
-		idsToVehicles[_vehicleId] = v;
 		vehicleIds.push(_vehicleId);
 
 		emit vehicleAdded(
@@ -133,35 +147,38 @@ contract LigoAgreementsFactory is Ownable {
 			"Insufficient rent & bond paid"
 		);
 
-		//create new Rental Agreement
-		LigoRentalAgreement rentalAgreement = new LigoRentalAgreement(
-			_vehicleOwner,
-			_renter,
-			_vehicleId,
-			_startDateTime,
-			_endDateTime,
-			totalRentCost,
-			bondRequired,
-			LINK_TOKEN,
-			ORACLE_CONTRACT,
-			ORACLE_PAYMENT,
-			JOB_ID
-		);
-
-		// Send the ETH it owns
-		payable(address(rentalAgreement)).transfer(
-			totalRentCost + bondRequired
+		//create new Rental Agreement and send the ETH it owns
+		LigoRentalAgreement rentalAgreement = (new LigoRentalAgreement){
+			value: totalRentCost + bondRequired
+		}(
+			Agreement(
+				_vehicleOwner,
+				_renter,
+				_vehicleId,
+				_startDateTime,
+				_endDateTime,
+				totalRentCost,
+				bondRequired,
+				LINK_TOKEN,
+				ORACLE_CONTRACT,
+				ORACLE_PAYMENT,
+				JOB_ID
+			)
 		);
 
 		//store new agreement in array of agreements
-		rentalAgreements.push(rentalAgreement);
+		ownerToAgreementsAddresses[_vehicleOwner].push(
+			address(rentalAgreement)
+		);
+		renterToAgreementsAddresses[_renter].push(address(rentalAgreement));
 
-		emit rentalAgreementCreated(address(rentalAgreement), msg.value);
+		emit rentalAgreementCreated(
+			address(rentalAgreement),
+			totalRentCost + bondRequired
+		);
 
 		//now that contract has been created, we need to fund it with enough LINK tokens to fulfil 1 Oracle request per day
-		LinkTokenInterface link = LinkTokenInterface(
-			rentalAgreement.getChainlinkToken()
-		);
+		LinkTokenInterface link = LinkTokenInterface(LINK_TOKEN);
 		link.transfer(address(rentalAgreement), 1 ether);
 
 		return address(rentalAgreement);
@@ -199,77 +216,18 @@ contract LigoAgreementsFactory is Ownable {
 	}
 
 	/**
-	 * @dev Return a particular Rental Contract based on a rental contract address
-	 */
-	function getRentalContract(address _rentalContract)
-		external
-		view
-		returns (
-			address,
-			address,
-			uint256,
-			uint256,
-			uint256,
-			uint256,
-			RentalAgreementStatus
-		)
-	{
-		//loop through list of contracts, and find any belonging to the address
-		for (uint256 i = 0; i < rentalAgreements.length; i++) {
-			if (address(rentalAgreements[i]) == _rentalContract) {
-				return rentalAgreements[i].getAgreementDetails();
-			}
-		}
-	}
-
-	/**
 	 * @dev Return a list of rental contract addresses belonging to a particular vehicle owner or renter
-	 *      ownerRenter = 0 means vehicle owner, 1 = vehicle renter
 	 */
 	function getRentalContractsByUser(bool _isOwner, address _address)
 		external
 		view
 		returns (address[] memory)
 	{
-		//loop through list of contracts, and find any belonging to the address & type (renter or vehicle owner)
-		uint256 finalResultCount = 0;
-
-		//because we need to know exact size of final memory array, first we need to iterate and count how many will be in the final result
-		for (uint256 i = 0; i < rentalAgreements.length; i++) {
-			if (_isOwner == true) {
-				//owner scenario
-				if (rentalAgreements[i].getVehicleOwner() == _address) {
-					finalResultCount = finalResultCount + 1;
-				}
-			} else {
-				//renter scenario
-				if (rentalAgreements[i].getVehicleRenter() == _address) {
-					finalResultCount = finalResultCount + 1;
-				}
-			}
+		if (_isOwner) {
+			return ownerToAgreementsAddresses[_address];
+		} else {
+			return renterToAgreementsAddresses[_address];
 		}
-
-		//now we have the total count, we can create a memory array with the right size and then populate it
-		address[] memory addresses = new address[](finalResultCount);
-		uint256 addrCountInserted = 0;
-
-		for (uint256 j = 0; j < rentalAgreements.length; j++) {
-			if (_isOwner == true) {
-				//owner scenario
-				if (rentalAgreements[j].getVehicleOwner() == _address) {
-					addresses[addrCountInserted] = address(rentalAgreements[j]);
-					addrCountInserted = addrCountInserted + 1;
-				}
-			} else {
-				//renter scenario
-				if (rentalAgreements[j].getVehicleRenter() == _address) {
-					addresses[addrCountInserted] = address(rentalAgreements[j]);
-					addrCountInserted = addrCountInserted + 1;
-				}
-			}
-		}
-
-		return addresses;
 	}
 
 	/**
