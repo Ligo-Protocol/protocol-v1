@@ -1,6 +1,7 @@
 require("@nomiclabs/hardhat-waffle");
 require("@nomiclabs/hardhat-etherscan");
 require("hardhat-contract-sizer");
+require("solidity-coverage");
 require("dotenv").config();
 
 // This is a sample Hardhat task. To learn how to create your own go to
@@ -29,7 +30,7 @@ module.exports = {
       },
     },
   },
-  defaultNetwork: "hardhat",
+  defaultNetwork: "kovan",
   paths: {
     artifacts: "./src/artifacts",
   },

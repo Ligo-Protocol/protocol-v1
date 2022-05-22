@@ -7,10 +7,9 @@ import "hardhat/console.sol";
 import "./LigoRentalAgreement.sol";
 
 contract LigoAgreementsFactory is Ownable {
-	// TODO find job id, oracle contract and fee amount
-	bytes32 private JOB_ID;
-	address private ORACLE_CONTRACT;
-	uint256 private ORACLE_PAYMENT;
+	bytes32 private JOB_ID; // "65f26cc69fe2454eacf129aef846e65a"
+	address private ORACLE_CONTRACT; // 0x89dca850F3C3BF8fB0209190CD45e4a59632C73D
+	uint256 private ORACLE_PAYMENT; // 100000000000000000
 	address private NODE_ADDRESS; // 0xCE83D12d9613D9b0A2beE78c221474120c606b67
 	address private LINK_TOKEN; // KOVAN -> 0xa36085F69e2889c224210F603D836748e7dC0088
 

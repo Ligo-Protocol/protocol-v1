@@ -12,8 +12,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	using Chainlink for Chainlink.Request;
 
 	uint256 private LOCATION_BUFFER = 10; //Buffer for how far from start position end position can be without incurring fine. -> 1 = 10m -> 10 = 100m
-	uint256 private ODOMETER_BUFFER = 5; //Buffer for how many kilometers past agreed total kilometers allowed without incurring fine
-	uint256 private TIME_BUFFER = 10800; //Buffer for how many seconds past agreed end time can the renter end the contrat without incurring a penalty
+	uint256 private ODOMETER_BUFFER = 5; //Buffer for how many kilometers allowed without incurring fine
+	uint256 private TIME_BUFFER = 10800; //Buffer for how many seconds can the renter end the contrat without incurring a penalty
 
 	uint256 private constant LOCATION_FINE = 1; //What percentage of bond goes to vehicle owner if vehicle isn't returned at the correct location + buffer, per km
 	uint256 private constant ODOMETER_FINE = 1; //What percentage of bond goes to vehicle owner  if vehicle incurs more than allowed kilometers + buffer, per km
@@ -191,7 +191,12 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	/**
 	 * @dev Step 02b: Owner REJECTS proposal, contract becomes REJECTED. This is the end of the line for the Contract
 	 */
-	function rejectContract() external onlyVehicleOwner onlyContractProposed {
+	function rejectContract()
+		external
+		payable
+		onlyVehicleOwner
+		onlyContractProposed
+	{
 		//Vehicle Owner simply looks at proposed agreement & either approves or denies it.
 		//Only vehicle owner can run this, contract must be in PROPOSED status
 		//In this case, we reject. Contract becomes Rejected. No more actions should be possible on the contract in this status
