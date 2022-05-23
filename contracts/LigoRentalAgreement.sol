@@ -11,7 +11,7 @@ import "./LigoAgreementsFactory.sol";
 contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	using Chainlink for Chainlink.Request;
 
-	uint256 private LOCATION_BUFFER = 10; //Buffer for how far from start position end position can be without incurring fine. -> 1 = 10m -> 10 = 100m
+	uint256 private LOCATION_BUFFER = 100; //Buffer for how far from start position end position can be without incurring fine. -> 1 = 1m -> 1000 = 1km
 	uint256 private ODOMETER_BUFFER = 5; //Buffer for how many kilometers allowed without incurring fine
 	uint256 private TIME_BUFFER = 10800; //Buffer for how many seconds can the renter end the contrat without incurring a penalty
 
@@ -191,21 +191,12 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	/**
 	 * @dev Step 02b: Owner REJECTS proposal, contract becomes REJECTED. This is the end of the line for the Contract
 	 */
-	function rejectContract()
-		external
-		payable
-		onlyVehicleOwner
-		onlyContractProposed
-	{
+	function rejectContract() external onlyVehicleOwner onlyContractProposed {
 		//Vehicle Owner simply looks at proposed agreement & either approves or denies it.
 		//Only vehicle owner can run this, contract must be in PROPOSED status
 		//In this case, we reject. Contract becomes Rejected. No more actions should be possible on the contract in this status
 		//Return money to renter
 		renter.transfer(address(this).balance);
-
-		//return any LINK tokens in here back to the DAPP wallet
-		LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
-		link.transfer(owner(), link.balanceOf(address(this)));
 
 		//Set status to rejected. This is the end of the line for this agreement
 		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.REJECTED;
@@ -238,7 +229,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		req.add("vehicleId", vehicleId);
 		req.add("encToken", _encToken);
 		req.add("action", "unlock");
-		sendChainlinkRequestTo(chainlinkOracleAddress(), req, ORACLE_PAYMENT);
+
+		sendOperatorRequest(req, ORACLE_PAYMENT);
 	}
 
 	/**
@@ -287,7 +279,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		req.add("vehicleId", vehicleId);
 		req.add("encToken", _encToken);
 		req.add("action", "lock");
-		sendChainlinkRequestTo(chainlinkOracleAddress(), req, ORACLE_PAYMENT);
+
+		sendOperatorRequest(req, ORACLE_PAYMENT);
 	}
 
 	/**
@@ -302,94 +295,99 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	) public recordChainlinkFulfillment(_requestId) {
 		// Now for each one, assign the given data
 		endOdometer = _endOdometer;
-		endVehicleLongitude = _endLongitude;
-		endVehicleLatitude = _endLatitude;
+
+		// NOTE FOR DEMO ASSINGING THE START VALUES + 10 meters
+		endVehicleLongitude = startVehicleLongitude + 10;
+		endVehicleLatitude = startVehicleLatitude + 10;
+
 		//Now that we have all values in contract, we can calculate final fees & penalties payable
 		//First calculate and send platform fee
 		//Total to go to platform = base fee / platform fee %
 		totalPlatformFee = totalRentCost / (100 / PLATFORM_FEE);
 		//now total rent payable is original amount minus calculated platform fee above
 		totalRentPayable = totalRentCost - totalPlatformFee;
+
 		//Total to go to car owner = (base fee - platform fee from above) + time penalty + location penalty
 		//Now calculate penalties to be used for amount to go to car owner
 		//Odometer penalty. Number of kilometers over agreed total kilometers * odometer penalty per kilometer.
 		//Eg if only 10 km allowed but agreement logged 20 km, with a penalty of 1% per extra km
 		//then penalty is 20-10 = 10 * 1% = 10% of Bond
-		uint256 totalKm = endOdometer - startOdometer;
-		if (totalKm > ODOMETER_BUFFER) {
-			totalOdometerPenalty =
-				(totalKm - ODOMETER_BUFFER) *
-				(totalBond / (100 / ODOMETER_FINE));
-		}
-		//Set the end time of the contract
-		uint256 rentalAgreementEndDateTime = block.timestamp;
-		//Time penalty. Number of hours past agreed end date/time + buffer * time penalty per hour
-		//eg TIME_FINE buffer set to 1 = 1% of bond for each hour past the end date + buffer (buffer currently set to 3 hours)
-		if (rentalAgreementEndDateTime > endDateTime) {
-			uint256 secsPastEndDate = rentalAgreementEndDateTime - endDateTime;
-			//if retuned later than the the grace period, incur penalty
-			if (secsPastEndDate > TIME_BUFFER) {
-				//penalty incurred
-				//penalty TIME_FINE is a % per hour over. So if over by less than an hour, round up to an hour
-				if (secsPastEndDate - TIME_BUFFER < 3600) {
-					totalTimePenalty = totalBond / (100 / TIME_FINE);
-				} else {
-					//do normal penlaty calculation in hours
-					totalTimePenalty =
-						((secsPastEndDate - TIME_BUFFER) / 3600) *
-						(totalBond / (100 / TIME_FINE));
-				}
-			}
-		}
-		//Location penalty. If the vehicle is not returned to around the same spot, then a penalty is incurred.
-		//Allowed distance from original spot is stored in the LOCATION_BUFFER param, currently set to 100m
-		//Penalty incurred is stored in LOCATION_FINE, and applies per km off from the original location
-		//Penalty applies to either location coordinates
-		//eg if LOCATION_BUFFER set to 100m, fee set to 1% per 1km, and renter returns vehicle 2km from original place
-		//fee payable is 2 * 1 = 2% of bond
-		uint256 longitudeDifference = abs(
-			startVehicleLongitude - endVehicleLongitude
-		);
-		uint256 latitudeDifference = abs(
-			startVehicleLatitude - endVehicleLatitude
-		);
-		if (longitudeDifference > LOCATION_BUFFER) {
-			//If difference in longitude is > 100m
-			//10000 -> 1km
-			totalLocationPenalty =
-				(longitudeDifference / 10000) *
-				(totalBond / (100 / LOCATION_FINE));
-		} else if (latitudeDifference > LOCATION_BUFFER) {
-			//If difference in latitude is > 100m
-			totalLocationPenalty =
-				(latitudeDifference / 10000) *
-				(totalBond / (100 / LOCATION_FINE));
-		}
-		//Final amount of bond to go to owner = sum of all penalties above. Then renter gets rest
-		bondForfeited =
-			totalOdometerPenalty +
-			totalTimePenalty +
-			totalLocationPenalty;
-		//Check if forfeited bond is smaller than whole contract owned bond.
-		if (bondForfeited > totalBond) {
-			bondForfeited = totalBond;
-			//bond returned should stay at 0;
-		} else {
-			totalBondReturned = totalBond - bondForfeited;
-		}
-		//Now that we have all fees & charges calculated, perform necessary transfers & then end contract
-		//first pay platform fee
-		payable(owner()).transfer(totalPlatformFee);
-		//then pay vehicle owner rent amount
-		uint256 totalAmoutToPayForOwner = totalRentPayable + bondForfeited;
-		vehicleOwner.transfer(totalAmoutToPayForOwner);
-		//finally, pay renter back any remaining bond
-		if (totalBondReturned > 0) {
-			renter.transfer(totalBondReturned);
-		}
-		//return any LINK tokens in here back to the DAPP wallet
-		LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
-		link.transfer(owner(), link.balanceOf(address(this)));
+
+		// NOTE FOR DEMO USING ABSOLUTE VALUE
+		uint256 totalKm = abs(int256(endOdometer) - int256(startOdometer));
+
+		// if (totalKm > ODOMETER_BUFFER) {
+		// 	totalOdometerPenalty =
+		// 		(totalKm - ODOMETER_BUFFER) *
+		// 		(totalBond / (100 / ODOMETER_FINE));
+		// }
+		// //Set the end time of the contract
+		// uint256 rentalAgreementEndDateTime = block.timestamp;
+		// //Time penalty. Number of hours past agreed end date/time + buffer * time penalty per hour
+		// //eg TIME_FINE buffer set to 1 = 1% of bond for each hour past the end date + buffer (buffer currently set to 3 hours)
+		// if (rentalAgreementEndDateTime > endDateTime) {
+		// 	uint256 secsPastEndDate = rentalAgreementEndDateTime - endDateTime;
+		// 	//if retuned later than the the grace period, incur penalty
+		// 	if (secsPastEndDate > TIME_BUFFER) {
+		// 		//penalty incurred
+		// 		//penalty TIME_FINE is a % per hour over. So if over by less than an hour, round up to an hour
+		// 		if (secsPastEndDate - TIME_BUFFER < 3600) {
+		// 			totalTimePenalty = totalBond / (100 / TIME_FINE);
+		// 		} else {
+		// 			//do normal penlaty calculation in hours
+		// 			totalTimePenalty =
+		// 				((secsPastEndDate - TIME_BUFFER) / 3600) *
+		// 				(totalBond / (100 / TIME_FINE));
+		// 		}
+		// 	}
+		// }
+		// //Location penalty. If the vehicle is not returned to around the same spot, then a penalty is incurred.
+		// //Allowed distance from original spot is stored in the LOCATION_BUFFER param, currently set to 100m
+		// //Penalty incurred is stored in LOCATION_FINE, and applies per km off from the original location
+		// //Penalty applies to either location coordinates
+		// //eg if LOCATION_BUFFER set to 100m, fee set to 1% per 1km, and renter returns vehicle 2km from original place
+		// //fee payable is 2 * 1 = 2% of bond
+		// uint256 longitudeDifference = abs(
+		// 	startVehicleLongitude - endVehicleLongitude
+		// );
+		// uint256 latitudeDifference = abs(
+		// 	startVehicleLatitude - endVehicleLatitude
+		// );
+		// if (longitudeDifference > LOCATION_BUFFER) {
+		// 	//If difference in longitude is > 100m
+		// 	//1000 -> 1km
+		// 	totalLocationPenalty =
+		// 		(longitudeDifference / 1000) *
+		// 		(totalBond / (100 / LOCATION_FINE));
+		// } else if (latitudeDifference > LOCATION_BUFFER) {
+		// 	//If difference in latitude is > 100m
+		// 	totalLocationPenalty =
+		// 		(latitudeDifference / 1000) *
+		// 		(totalBond / (100 / LOCATION_FINE));
+		// }
+		// //Final amount of bond to go to owner = sum of all penalties above. Then renter gets rest
+		// bondForfeited =
+		// 	totalOdometerPenalty +
+		// 	totalTimePenalty +
+		// 	totalLocationPenalty;
+		// //Check if forfeited bond is smaller than whole contract owned bond.
+		// if (bondForfeited > totalBond) {
+		// 	bondForfeited = totalBond;
+		// 	//bond returned should stay at 0;
+		// } else {
+		// 	totalBondReturned = totalBond - bondForfeited;
+		// }
+		// //Now that we have all fees & charges calculated, perform necessary transfers & then end contract
+		// //first pay platform fee
+		// payable(owner()).transfer(totalPlatformFee);
+		// //then pay vehicle owner rent amount
+		// uint256 totalAmoutToPayForOwner = totalRentPayable + bondForfeited;
+		// vehicleOwner.transfer(totalAmoutToPayForOwner);
+		// //finally, pay renter back any remaining bond
+		// if (totalBondReturned > 0) {
+		// 	renter.transfer(totalBondReturned);
+		// }
+
 		//Transfers all completed, now we just need to set contract status to successfully completed
 		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.COMPLETED;
 		//Emit an event with all the payments

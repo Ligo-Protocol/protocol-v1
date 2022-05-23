@@ -30,7 +30,7 @@ module.exports = {
       },
     },
   },
-  defaultNetwork: "kovan",
+  defaultNetwork: "hardhat",
   paths: {
     artifacts: "./src/artifacts",
   },
