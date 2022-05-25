@@ -83,13 +83,6 @@ describe("LigoRentalAgreement Functions Unit Test", () => {
     await transaction.wait();
   };
 
-  const rejectAgreementContract = async () => {
-    const transaction = await ligoAgreement
-      .connect(vehicleOwner)
-      .rejectContract();
-    await transaction.wait();
-  };
-
   beforeEach(async () => {
     [parentContract, vehicleOwner, renter] = await ethers.getSigners();
 
@@ -127,20 +120,4 @@ describe("LigoRentalAgreement Functions Unit Test", () => {
     // Assert
     expect(getDetails[6]).to.equal(1); //APPROVED
   });
-
-  //   it("Should run rejectContract(), transfer renter ETH, LINK and change status", async () => {
-  //     // Arrange
-  //     const provider = waffle.provider;
-
-  //     //Act
-  //     rejectAgreementContract();
-  //     getDetails = await ligoAgreement
-  //       .connect(vehicleOwner)
-  //       .getAgreementDetails();
-  //     const contractBalance = await provider.getBalance(ligoAgreement.address);
-
-  //     // Assert
-  //     // expect(contractBalance).to.equal(0);
-  //     expect(getDetails[6]).to.equal(2); //REJECTED
-  //   });
 });

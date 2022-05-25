@@ -2,7 +2,6 @@
 pragma solidity ^0.8.7;
 
 import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
-import "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "hardhat/console.sol";
 
@@ -11,9 +10,9 @@ import "./LigoAgreementsFactory.sol";
 contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	using Chainlink for Chainlink.Request;
 
-	uint256 private LOCATION_BUFFER = 10; //Buffer for how far from start position end position can be without incurring fine. -> 1 = 10m -> 10 = 100m
-	uint256 private ODOMETER_BUFFER = 5; //Buffer for how many kilometers allowed without incurring fine
-	uint256 private TIME_BUFFER = 10800; //Buffer for how many seconds can the renter end the contrat without incurring a penalty
+	uint256 private LOCATION_BUFFER = 100; //Buffer for how far from start position end position can be without incurring fine. -> 1 = 1m -> 1000 = 1km
+	uint256 private ODOMETER_BUFFER = 10; //Buffer for how many kilometers allowed without incurring fine
+	uint256 private TIME_BUFFER = 2 hours; //Buffer for how many seconds can the renter end the contrat without incurring a penalty
 
 	uint256 private constant LOCATION_FINE = 1; //What percentage of bond goes to vehicle owner if vehicle isn't returned at the correct location + buffer, per km
 	uint256 private constant ODOMETER_FINE = 1; //What percentage of bond goes to vehicle owner  if vehicle incurs more than allowed kilometers + buffer, per km
@@ -191,21 +190,12 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	/**
 	 * @dev Step 02b: Owner REJECTS proposal, contract becomes REJECTED. This is the end of the line for the Contract
 	 */
-	function rejectContract()
-		external
-		payable
-		onlyVehicleOwner
-		onlyContractProposed
-	{
+	function rejectContract() external onlyVehicleOwner onlyContractProposed {
 		//Vehicle Owner simply looks at proposed agreement & either approves or denies it.
 		//Only vehicle owner can run this, contract must be in PROPOSED status
 		//In this case, we reject. Contract becomes Rejected. No more actions should be possible on the contract in this status
 		//Return money to renter
 		renter.transfer(address(this).balance);
-
-		//return any LINK tokens in here back to the DAPP wallet
-		LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
-		link.transfer(owner(), link.balanceOf(address(this)));
 
 		//Set status to rejected. This is the end of the line for this agreement
 		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.REJECTED;
@@ -237,8 +227,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		);
 		req.add("vehicleId", vehicleId);
 		req.add("encToken", _encToken);
-		req.add("action", "unlock");
-		sendChainlinkRequestTo(chainlinkOracleAddress(), req, ORACLE_PAYMENT);
+
+		sendOperatorRequest(req, ORACLE_PAYMENT);
 	}
 
 	/**
@@ -253,7 +243,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		int256 _startLatitude
 	) public recordChainlinkFulfillment(_requestId) {
 		//Now for each one, assign the given data
-		startOdometer = _startOdometer;
+		// Divide by 1000, because data is returned in meters
+		startOdometer = _startOdometer / 1000;
 		startVehicleLongitude = _startLongitude;
 		startVehicleLatitude = _startLatitude;
 
@@ -286,8 +277,8 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 
 		req.add("vehicleId", vehicleId);
 		req.add("encToken", _encToken);
-		req.add("action", "lock");
-		sendChainlinkRequestTo(chainlinkOracleAddress(), req, ORACLE_PAYMENT);
+
+		sendOperatorRequest(req, ORACLE_PAYMENT);
 	}
 
 	/**
@@ -301,21 +292,28 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		int256 _endLatitude
 	) public recordChainlinkFulfillment(_requestId) {
 		// Now for each one, assign the given data
-		endOdometer = _endOdometer;
+		// Divide by 1000, because data is returned in meters
+		endOdometer = _endOdometer / 1000;
+
 		endVehicleLongitude = _endLongitude;
 		endVehicleLatitude = _endLatitude;
+
 		//Now that we have all values in contract, we can calculate final fees & penalties payable
 		//First calculate and send platform fee
 		//Total to go to platform = base fee / platform fee %
 		totalPlatformFee = totalRentCost / (100 / PLATFORM_FEE);
 		//now total rent payable is original amount minus calculated platform fee above
 		totalRentPayable = totalRentCost - totalPlatformFee;
+
 		//Total to go to car owner = (base fee - platform fee from above) + time penalty + location penalty
 		//Now calculate penalties to be used for amount to go to car owner
 		//Odometer penalty. Number of kilometers over agreed total kilometers * odometer penalty per kilometer.
 		//Eg if only 10 km allowed but agreement logged 20 km, with a penalty of 1% per extra km
 		//then penalty is 20-10 = 10 * 1% = 10% of Bond
-		uint256 totalKm = endOdometer - startOdometer;
+
+		// NOTE FOR DEMO USING ABSOLUTE VALUE
+		uint256 totalKm = abs(int256(endOdometer) - int256(startOdometer));
+
 		if (totalKm > ODOMETER_BUFFER) {
 			totalOdometerPenalty =
 				(totalKm - ODOMETER_BUFFER) *
@@ -331,16 +329,17 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 			if (secsPastEndDate > TIME_BUFFER) {
 				//penalty incurred
 				//penalty TIME_FINE is a % per hour over. So if over by less than an hour, round up to an hour
-				if (secsPastEndDate - TIME_BUFFER < 3600) {
+				if (secsPastEndDate - TIME_BUFFER < 1 hours) {
 					totalTimePenalty = totalBond / (100 / TIME_FINE);
 				} else {
 					//do normal penlaty calculation in hours
 					totalTimePenalty =
-						((secsPastEndDate - TIME_BUFFER) / 3600) *
+						((secsPastEndDate - TIME_BUFFER) / 1 hours) *
 						(totalBond / (100 / TIME_FINE));
 				}
 			}
 		}
+
 		//Location penalty. If the vehicle is not returned to around the same spot, then a penalty is incurred.
 		//Allowed distance from original spot is stored in the LOCATION_BUFFER param, currently set to 100m
 		//Penalty incurred is stored in LOCATION_FINE, and applies per km off from the original location
@@ -353,23 +352,46 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		uint256 latitudeDifference = abs(
 			startVehicleLatitude - endVehicleLatitude
 		);
-		if (longitudeDifference > LOCATION_BUFFER) {
-			//If difference in longitude is > 100m
-			//10000 -> 1km
-			totalLocationPenalty =
-				(longitudeDifference / 10000) *
-				(totalBond / (100 / LOCATION_FINE));
-		} else if (latitudeDifference > LOCATION_BUFFER) {
-			//If difference in latitude is > 100m
-			totalLocationPenalty =
-				(latitudeDifference / 10000) *
-				(totalBond / (100 / LOCATION_FINE));
+
+		//Fee that would be charged on every kilometer in location that exceeds the limit
+		uint256 feePerKm = (totalBond / (100 / LOCATION_FINE));
+		if (
+			longitudeDifference > latitudeDifference &&
+			longitudeDifference > LOCATION_BUFFER
+		) {
+			// If vehicle is more far away in longitude and buffer is exceeded
+			// Take 1% fee if difference is less than 1km,
+			// else calculate the specific fee
+
+			if (longitudeDifference - LOCATION_BUFFER < 1000) {
+				totalLocationPenalty = feePerKm;
+			} else {
+				totalLocationPenalty =
+					((longitudeDifference - LOCATION_BUFFER) / 1000) *
+					feePerKm;
+			}
+		} else if (
+			latitudeDifference > longitudeDifference &&
+			latitudeDifference > LOCATION_BUFFER
+		) {
+			// If vehicle is more far away in latitude and buffer is exceeded
+			// Take 1% fee if difference is less than 1km,
+			// else calculate the specific fee
+			if (latitudeDifference - LOCATION_BUFFER < 1000) {
+				totalLocationPenalty = feePerKm;
+			} else {
+				totalLocationPenalty =
+					((latitudeDifference - LOCATION_BUFFER) / 1000) *
+					feePerKm;
+			}
 		}
+
 		//Final amount of bond to go to owner = sum of all penalties above. Then renter gets rest
 		bondForfeited =
 			totalOdometerPenalty +
 			totalTimePenalty +
 			totalLocationPenalty;
+
 		//Check if forfeited bond is smaller than whole contract owned bond.
 		if (bondForfeited > totalBond) {
 			bondForfeited = totalBond;
@@ -377,6 +399,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		} else {
 			totalBondReturned = totalBond - bondForfeited;
 		}
+
 		//Now that we have all fees & charges calculated, perform necessary transfers & then end contract
 		//first pay platform fee
 		payable(owner()).transfer(totalPlatformFee);
@@ -387,9 +410,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		if (totalBondReturned > 0) {
 			renter.transfer(totalBondReturned);
 		}
-		//return any LINK tokens in here back to the DAPP wallet
-		LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
-		link.transfer(owner(), link.balanceOf(address(this)));
+
 		//Transfers all completed, now we just need to set contract status to successfully completed
 		agreementStatus = LigoAgreementsFactory.RentalAgreementStatus.COMPLETED;
 		//Emit an event with all the payments

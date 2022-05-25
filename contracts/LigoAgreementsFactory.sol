@@ -7,11 +7,11 @@ import "hardhat/console.sol";
 import "./LigoRentalAgreement.sol";
 
 contract LigoAgreementsFactory is Ownable {
-	bytes32 private JOB_ID; // "65f26cc69fe2454eacf129aef846e65a"
-	address private ORACLE_CONTRACT; // 0x89dca850F3C3BF8fB0209190CD45e4a59632C73D
-	uint256 private ORACLE_PAYMENT; // 100000000000000000
-	address private NODE_ADDRESS; // 0xCE83D12d9613D9b0A2beE78c221474120c606b67
-	address private LINK_TOKEN; // KOVAN -> 0xa36085F69e2889c224210F603D836748e7dC0088
+	bytes32 private JOB_ID = "65f26cc69fe2454eacf129aef846e65a";
+	address private ORACLE_CONTRACT =
+		0x89dca850F3C3BF8fB0209190CD45e4a59632C73D;
+	uint256 private ORACLE_PAYMENT = 0;
+	address private LINK_TOKEN = 0xa36085F69e2889c224210F603D836748e7dC0088;
 
 	enum RentalAgreementStatus {
 		PROPOSED,
@@ -48,19 +48,7 @@ contract LigoAgreementsFactory is Ownable {
 	mapping(address => address[]) internal ownerToAgreementsAddresses;
 	mapping(address => address[]) internal renterToAgreementsAddresses;
 
-	constructor(
-		bytes32 _jobId,
-		address _oracleContract,
-		uint256 _oraclePayment,
-		address _nodeAddress,
-		address _linkToken
-	) {
-		JOB_ID = _jobId;
-		ORACLE_CONTRACT = _oracleContract;
-		ORACLE_PAYMENT = _oraclePayment;
-		NODE_ADDRESS = _nodeAddress;
-		LINK_TOKEN = _linkToken;
-	}
+	constructor() {}
 
 	event rentalAgreementCreated(
 		address _newAgreement,
@@ -176,10 +164,6 @@ contract LigoAgreementsFactory is Ownable {
 			totalRentCost + bondRequired
 		);
 
-		//now that contract has been created, we need to fund it with enough LINK tokens to fulfil 1 Oracle request per day
-		LinkTokenInterface link = LinkTokenInterface(LINK_TOKEN);
-		link.transfer(address(rentalAgreement), 1 ether);
-
 		return address(rentalAgreement);
 	}
 
@@ -230,11 +214,16 @@ contract LigoAgreementsFactory is Ownable {
 	}
 
 	/**
-	 * @dev Function to end provider contract, in case of bugs or needing to update logic etc, funds are returned to dapp owner, including any remaining LINK tokens
+	 * @dev Owner can transfer platform funds to wanted address
 	 */
-	function endContractProvider() external payable onlyOwner {
-		LinkTokenInterface link = LinkTokenInterface(LINK_TOKEN);
-		link.transfer(msg.sender, link.balanceOf(address(this)));
+	function transferPlatformFunds(address _toAddress) external onlyOwner {
+		payable(_toAddress).transfer(address(this).balance);
+	}
+
+	/**
+	 * @dev Function to end provider contract, in case of bugs or needing to update logic etc
+	 */
+	function endContractProvider() external onlyOwner {
 		selfdestruct(payable(owner()));
 	}
 }
