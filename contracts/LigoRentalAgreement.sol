@@ -227,7 +227,6 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		);
 		req.add("vehicleId", vehicleId);
 		req.add("encToken", _encToken);
-
 		sendOperatorRequest(req, ORACLE_PAYMENT);
 	}
 
