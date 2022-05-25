@@ -190,7 +190,12 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 	/**
 	 * @dev Step 02b: Owner REJECTS proposal, contract becomes REJECTED. This is the end of the line for the Contract
 	 */
-	function rejectContract() external onlyVehicleOwner onlyContractProposed {
+	function rejectContract()
+		external
+		payable
+		onlyVehicleOwner
+		onlyContractProposed
+	{
 		//Vehicle Owner simply looks at proposed agreement & either approves or denies it.
 		//Only vehicle owner can run this, contract must be in PROPOSED status
 		//In this case, we reject. Contract becomes Rejected. No more actions should be possible on the contract in this status
@@ -289,7 +294,7 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		uint256 _endOdometer,
 		int256 _endLongitude,
 		int256 _endLatitude
-	) public recordChainlinkFulfillment(_requestId) {
+	) public payable recordChainlinkFulfillment(_requestId) {
 		// Now for each one, assign the given data
 		// Divide by 1000, because data is returned in meters
 		endOdometer = _endOdometer / 1000;

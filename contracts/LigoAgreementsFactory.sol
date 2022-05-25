@@ -216,7 +216,11 @@ contract LigoAgreementsFactory is Ownable {
 	/**
 	 * @dev Owner can transfer platform funds to wanted address
 	 */
-	function transferPlatformFunds(address _toAddress) external onlyOwner {
+	function transferPlatformFunds(address _toAddress)
+		external
+		payable
+		onlyOwner
+	{
 		payable(_toAddress).transfer(address(this).balance);
 	}
 
@@ -226,4 +230,9 @@ contract LigoAgreementsFactory is Ownable {
 	function endContractProvider() external onlyOwner {
 		selfdestruct(payable(owner()));
 	}
+
+	/**
+	 * @dev Fallback function for recieving ETH
+	 */
+	receive() external payable {}
 }

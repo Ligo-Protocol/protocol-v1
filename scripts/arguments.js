@@ -4,9 +4,9 @@ module.exports = [
   {
     vehicleOwner: process.env.ACCOUNT_1_ADDRESS,
     renter: process.env.ACCOUNT_2_ADDRESS,
-    vehicleId: "65bf2263-d5c9-4e3e-b893-550ef9d0b27e",
-    startDateTime: 1653489000,
-    endDateTime: 1653510600,
+    vehicleId: "be9b0295-1738-488a-9600-42f04cf5cff7",
+    startDateTime: 1653500460,
+    endDateTime: 1653504060,
     totalRentCost: "10000000000000000",
     bondRequired: "10000000000000000",
     linkToken: "0xa36085F69e2889c224210F603D836748e7dC0088",
