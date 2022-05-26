@@ -558,6 +558,10 @@ contract LigoRentalAgreement is ChainlinkClient, Ownable {
 		);
 	}
 
+	function getVehicleId() public view returns (string memory) {
+		return vehicleId;
+	}
+
 	/**
 	 * @dev Helper function to get absolute value of an int
 	 */
